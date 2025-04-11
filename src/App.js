@@ -7,10 +7,12 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 // Páginas e Componentes
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+
 import ChatContainer from './components/chat/ChatContainer';
 
 // Componentes e Contextos
 import { AuthProvider } from './contexts/AuthContext';
+import { VisualizationProvider } from './contexts/VisualizationContext';
 import PrivateRoute from './components/layout/PrivateRoute';
 
 // Tema personalizado com as cores do Claud.IA logo
@@ -184,21 +186,23 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Router>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route 
-              path="/chat" 
-              element={
-                <PrivateRoute>
-                  <ChatContainer toggleColorMode={toggleColorMode} colorMode={mode} />
-                </PrivateRoute>
-              } 
-            />
-            <Route path="/" element={<Navigate to="/login" replace />} />
-          </Routes>
-        </Router>
+        <VisualizationProvider>
+          <Router>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route 
+                path="/chat" 
+                element={
+                  <PrivateRoute>
+                    <ChatContainer toggleColorMode={toggleColorMode} colorMode={mode} />
+                  </PrivateRoute>
+                } 
+              />
+              <Route path="/" element={<Navigate to="/login" replace />} />
+            </Routes>
+          </Router>
+        </VisualizationProvider>
       </AuthProvider>
     </ThemeProvider>
   );

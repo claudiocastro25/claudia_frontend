@@ -8,7 +8,8 @@ import {
   Backdrop,
   useTheme,
   useMediaQuery,
-  Fade
+  Fade,
+  ClickAwayListener
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
@@ -20,6 +21,8 @@ import ClaudiaWelcomeScreen from './ClaudiaWelcomeScreen';
 import DocumentPanel from '../documents/DocumentPanel';
 import DataVisualization from '../visualization/DataVisualization';
 import VisualizationContainer from '../visualization/VisualizationContainer';
+import VisualizationDrawer from '../visualization/VisualizationDrawer';
+import ProcessingFeedback from '../documents/ProcessingFeedback';
 
 // Services
 import { createConversation, getConversations, getConversation, sendMessage } from '../../services/chatService';
@@ -31,6 +34,65 @@ import {
 } from '../../services/documentService';
 import { useAuth } from '../../contexts/AuthContext';
 
+// Hooks para RAG e Visualização
+import { useRAG } from '../../hooks/useRAG';
+import { useDocuments } from '../../hooks/useDocuments';
+import { useVisualization } from '../../hooks/useVisualization';
+
+// Função auxiliar para extrair a conversa de diferentes estruturas de resposta
+const extractConversationFromResponse = (response) => {
+  if (!response) return null;
+  
+  // Caso 1: { data: { conversation: {...} } }
+  if (response.data?.conversation) {
+    return response.data.conversation;
+  }
+  
+  // Caso 2: { data: { data: { conversation: {...} } } }
+  if (response.data?.data?.conversation) {
+    return response.data.data.conversation;
+  }
+  
+  // Caso 3: Adaptador que coloca em { data: { data: { ... } } }
+  if (response.data?.data) {
+    // Se conversation_id estiver diretamente em data
+    if (response.data.data.conversation_id) {
+      return response.data.data;
+    }
+  }
+
+  // Caso 4: Adaptador que remove o nível intermediário
+  if (response.conversation_id) {
+    return response;
+  }
+  
+  console.error('Estrutura de resposta não reconhecida:', response);
+  return null;
+};
+
+// Função auxiliar para extrair mensagens de diferentes estruturas de resposta
+const extractMessagesFromResponse = (response) => {
+  if (!response) return [];
+
+  // Caso 1: { data: { messages: [...] } }
+  if (response.data?.messages) {
+    return response.data.messages;
+  }
+  
+  // Caso 2: { data: { data: { messages: [...] } } }
+  if (response.data?.data?.messages) {
+    return response.data.data.messages;
+  }
+  
+  // Caso 3: Adaptador que coloca as mensagens diretamente em data
+  if (Array.isArray(response.data)) {
+    return response.data;
+  }
+  
+  console.error('Estrutura de resposta de mensagens não reconhecida:', response);
+  return [];
+};
+
 const ChatContainer = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
@@ -41,6 +103,7 @@ const ChatContainer = () => {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const documentPanelRef = useRef(null);
+  const containerRef = useRef(null); // Ref para o container principal
   
   // State
   const [sidebarExpanded, setSidebarExpanded] = useState(!isMobile);
@@ -78,16 +141,68 @@ const ChatContainer = () => {
     documentId: null,
     filename: null,
     error: null,
-    progress: 0
+    progress: 0,
+    status: null
   });
   
+  // Hooks de RAG e visualização
+  const { 
+    searchRelevantContext, 
+    processAssistantResponse, 
+    documentContext, 
+    isSearching,
+    referenceInfo,
+    sourceDocuments
+  } = useRAG(currentConversation?.conversation_id);
+  
+  const {
+    documents,
+    loadDocuments,
+    uploadDocument: uploadDocumentHook,
+    viewDocument,
+    getProcessingMessage
+  } = useDocuments(currentConversation?.conversation_id);
+  
+  const {
+    processMessageForVisualizations,
+    extractVisualizationFromMessage,
+    visualizations,
+    activeVisualization,
+    isDrawerOpen,
+    openVisualization,
+    closeDrawer,
+    loadVisualizations
+  } = useVisualization(currentConversation?.conversation_id);
+
+  // Função para lidar com clique fora da sidebar quando ela está expandida
+  const handleClickAway = (event) => {
+    if (sidebarExpanded && isMobile) {
+      // Verificar se o clique não foi dentro da sidebar
+      const sidebarElement = document.querySelector('[data-testid="claudia-sidebar"]');
+      if (sidebarElement && !sidebarElement.contains(event.target)) {
+        setSidebarExpanded(false);
+      }
+    }
+  };
+
   // Load conversations on component mount
   useEffect(() => {
     const loadConversations = async () => {
       try {
         setIsLoading(true);
         const response = await getConversations();
-        setConversations(response.data.conversations || []);
+        
+        // Extrair conversas da resposta
+        let conversationsData = [];
+        if (response.data?.conversations) {
+          conversationsData = response.data.conversations;
+        } else if (response.data?.data?.conversations) {
+          conversationsData = response.data.data.conversations;
+        } else {
+          console.warn('Formato de resposta inesperado para conversas:', response);
+        }
+        
+        setConversations(conversationsData || []);
         
         // Check document processor health
         checkProcessorHealth();
@@ -116,7 +231,10 @@ const ChatContainer = () => {
       try {
         setIsLoading(true);
         const response = await getConversation(currentConversation.conversation_id);
-        const messagesData = response.data.messages || [];
+        
+        // Extrair mensagens da resposta
+        const messagesData = extractMessagesFromResponse(response) || [];
+        
         setMessages(messagesData);
         setIsNewChat(false);
         
@@ -131,13 +249,48 @@ const ChatContainer = () => {
         
         // Load documents associated with the conversation
         loadAssociatedDocuments(currentConversation.conversation_id);
+        
+        // Load visualizations for this conversation
+        if (typeof loadVisualizations === 'function') {
+          loadVisualizations();
+        }
       } catch (error) {
         console.error('Erro ao carregar mensagens:', error);
-        setAlertInfo({
-          open: true,
-          message: 'Não foi possível carregar as mensagens desta conversa',
-          severity: 'error'
-        });
+        
+        // Verificar se o erro é de conversa não encontrada
+        if (error.notFound || error.code === 404 || 
+            (error.status === 'error' && error.message?.includes('not found'))) {
+          
+          setAlertInfo({
+            open: true,
+            message: 'A conversa selecionada não existe ou foi excluída. Iniciando uma nova conversa.',
+            severity: 'warning'
+          });
+          
+          // Limpar conversa atual e iniciar nova
+          setCurrentConversation(null);
+          setMessages([]);
+          setIsNewChat(true);
+          setActiveDocuments([]);
+          setDocumentReferences({});
+          
+          // Atualizar lista de conversas
+          try {
+            const conversationsResponse = await getConversations();
+            if (conversationsResponse && conversationsResponse.data) {
+              setConversations(conversationsResponse.data.conversations || []);
+            }
+          } catch (convError) {
+            console.error('Erro ao atualizar lista de conversas:', convError);
+          }
+        } else {
+          // Erro normal
+          setAlertInfo({
+            open: true,
+            message: 'Não foi possível carregar as mensagens desta conversa',
+            severity: 'error'
+          });
+        }
       } finally {
         setIsLoading(false);
       }
@@ -146,7 +299,7 @@ const ChatContainer = () => {
     if (currentConversation) {
       loadMessages();
     }
-  }, [currentConversation]);
+  }, [currentConversation, loadVisualizations]);
   
   // Load documents associated with a conversation
   const loadAssociatedDocuments = async (conversationId) => {
@@ -206,6 +359,17 @@ const ChatContainer = () => {
     try {
       setIsTyping(true);
       
+      // Recolher a sidebar no mobile quando iniciar uma nova conversa
+      if (isMobile && sidebarExpanded) {
+        setSidebarExpanded(false);
+      }
+      
+      // Buscar contexto relevante dos documentos (RAG)
+      let contextData = null;
+      if (activeDocuments.length > 0 && typeof searchRelevantContext === 'function') {
+        contextData = await searchRelevantContext(content);
+      }
+      
       // Create conversation
       let title = content.length > 30 
         ? `${content.substring(0, 30)}...` 
@@ -217,11 +381,17 @@ const ChatContainer = () => {
       
       const conversationResponse = await createConversation(title);
       
-      if (!conversationResponse || !conversationResponse.data || !conversationResponse.data.conversation) {
-        throw new Error('Falha ao criar nova conversa');
+      // Verificar e extrair a resposta da conversa
+      if (!conversationResponse || !conversationResponse.data) {
+        throw new Error('Falha ao criar nova conversa - resposta inválida');
       }
       
-      const newConversation = conversationResponse.data.conversation;
+      const newConversation = conversationResponse.data?.conversation || conversationResponse.data;
+      
+      if (!newConversation || !newConversation.conversation_id) {
+        console.error('Resposta de conversa inválida:', conversationResponse);
+        throw new Error('Falha ao criar nova conversa - ID da conversa não encontrado');
+      }
       
       // Update state
       setCurrentConversation(newConversation);
@@ -239,12 +409,35 @@ const ChatContainer = () => {
       
       setMessages([tempUserMessage]);
       
-      // Send message to server
-      const messageResponse = await sendMessage(newConversation.conversation_id, content);
+      // Send message to server with document context
+      const messageResponse = await sendMessage(
+        newConversation.conversation_id, 
+        content,
+        contextData?.context
+      );
       
       // Update messages with server response
       if (messageResponse && messageResponse.data) {
-        const { userMessage, assistantMessage } = messageResponse.data;
+        // Extrair mensagens da resposta
+        let userMessage, assistantMessage;
+        
+        if (messageResponse.data.userMessage && messageResponse.data.assistantMessage) {
+          // Formato padrão
+          ({ userMessage, assistantMessage } = messageResponse.data);
+        } else if (messageResponse.data?.data?.userMessage && messageResponse.data?.data?.assistantMessage) {
+          // Formato adaptado
+          ({ userMessage, assistantMessage } = messageResponse.data.data);
+        } else {
+          console.warn('Formato de resposta não reconhecido:', messageResponse);
+          userMessage = tempUserMessage;
+          assistantMessage = {
+            message_id: `fallback-${Date.now()}`,
+            conversation_id: newConversation.conversation_id,
+            content: 'Não foi possível processar a resposta do assistente.',
+            role: 'assistant',
+            created_at: new Date().toISOString()
+          };
+        }
         
         // Capture document references
         if (assistantMessage.referenced_documents && assistantMessage.referenced_documents.length > 0) {
@@ -256,8 +449,23 @@ const ChatContainer = () => {
         
         setMessages([userMessage, assistantMessage]);
         
+        // Process assistant response for RAG references
+        if (typeof processAssistantResponse === 'function') {
+          processAssistantResponse(assistantMessage.content);
+        }
+        
         // Check for visualization data in the assistant's message
-        checkForVisualizationData(assistantMessage.content);
+        if (typeof processMessageForVisualizations === 'function') {
+          const vizResult = processMessageForVisualizations(
+            assistantMessage.content,
+            assistantMessage.message_id
+          );
+          
+          if (vizResult && vizResult.hasVisualization) {
+            setVisualizationData(vizResult.visualization);
+            setShowVisualization(true);
+          }
+        }
       }
       
       return newConversation;
@@ -279,6 +487,12 @@ const ChatContainer = () => {
     try {
       setIsTyping(true);
       
+      // Buscar contexto relevante dos documentos (RAG)
+      let contextData = null;
+      if (activeDocuments.length > 0 && typeof searchRelevantContext === 'function') {
+        contextData = await searchRelevantContext(content);
+      }
+      
       // Add temporary user message
       const tempUserMessage = {
         message_id: `temp-${Date.now()}`,
@@ -290,12 +504,35 @@ const ChatContainer = () => {
       
       setMessages(prev => [...prev, tempUserMessage]);
       
-      // Send message to server
-      const response = await sendMessage(conversationId, content);
+      // Send message to server with document context
+      const response = await sendMessage(
+        conversationId, 
+        content,
+        contextData?.context
+      );
       
       // Update messages with server response
       if (response && response.data) {
-        const { userMessage, assistantMessage } = response.data;
+        // Extrair mensagens da resposta
+        let userMessage, assistantMessage;
+        
+        if (response.data.userMessage && response.data.assistantMessage) {
+          // Formato padrão
+          ({ userMessage, assistantMessage } = response.data);
+        } else if (response.data?.data?.userMessage && response.data?.data?.assistantMessage) {
+          // Formato adaptado
+          ({ userMessage, assistantMessage } = response.data.data);
+        } else {
+          console.warn('Formato de resposta de mensagem não reconhecido:', response);
+          userMessage = tempUserMessage;
+          assistantMessage = {
+            message_id: `fallback-${Date.now()}`,
+            conversation_id: conversationId,
+            content: 'Não foi possível processar a resposta do assistente.',
+            role: 'assistant',
+            created_at: new Date().toISOString()
+          };
+        }
         
         // Capture document references
         if (assistantMessage.referenced_documents && assistantMessage.referenced_documents.length > 0) {
@@ -311,16 +548,61 @@ const ChatContainer = () => {
           return [...filtered, userMessage, assistantMessage];
         });
         
+        // Process assistant response for RAG references
+        if (typeof processAssistantResponse === 'function') {
+          processAssistantResponse(assistantMessage.content);
+        }
+        
         // Check for visualization data in the assistant's message
-        checkForVisualizationData(assistantMessage.content);
+        if (typeof processMessageForVisualizations === 'function') {
+          const vizResult = processMessageForVisualizations(
+            assistantMessage.content,
+            assistantMessage.message_id
+          );
+          
+          if (vizResult && vizResult.hasVisualization) {
+            setVisualizationData(vizResult.visualization);
+            setShowVisualization(true);
+          }
+        }
       }
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error);
-      setAlertInfo({
-        open: true,
-        message: 'Não foi possível enviar a mensagem',
-        severity: 'error'
-      });
+      
+      // Verificar se o erro é de conversa não encontrada
+      if (error.notFound || error.code === 404 || 
+          (error.status === 'error' && error.message?.includes('not found'))) {
+        
+        setAlertInfo({
+          open: true,
+          message: 'A conversa selecionada não existe ou foi excluída. Iniciando uma nova conversa.',
+          severity: 'warning'
+        });
+        
+        // Limpar conversa atual e iniciar nova
+        setCurrentConversation(null);
+        setMessages([]);
+        setIsNewChat(true);
+        setActiveDocuments([]);
+        setDocumentReferences({});
+        
+        // Atualizar lista de conversas
+        try {
+          const conversationsResponse = await getConversations();
+          if (conversationsResponse && conversationsResponse.data) {
+            setConversations(conversationsResponse.data.conversations || []);
+          }
+        } catch (convError) {
+          console.error('Erro ao atualizar lista de conversas:', convError);
+        }
+      } else {
+        // Erro normal
+        setAlertInfo({
+          open: true,
+          message: 'Não foi possível enviar a mensagem',
+          severity: 'error'
+        });
+      }
     } finally {
       setIsTyping(false);
     }
@@ -354,7 +636,7 @@ const ChatContainer = () => {
     setVisualizationData(null);
     
     // Close sidebar on mobile
-    if (isMobile) {
+    if (isMobile && sidebarExpanded) {
       setSidebarExpanded(false);
     }
   };
@@ -364,7 +646,7 @@ const ChatContainer = () => {
     setCurrentConversation(conversation);
     
     // Close sidebar on mobile
-    if (isMobile) {
+    if (isMobile && sidebarExpanded) {
       setSidebarExpanded(false);
     }
     
@@ -423,7 +705,8 @@ const ChatContainer = () => {
         documentId: null,
         filename: file.name,
         error: null,
-        progress: 10
+        progress: 10,
+        status: 'uploading'
       });
       
       // Upload document
@@ -432,11 +715,26 @@ const ChatContainer = () => {
       // Update progress
       setUploadStatus(prev => ({
         ...prev,
-        progress: 40
+        progress: 40,
+        status: 'processing'
       }));
       
-      // Get document ID
-      const documentId = response?.documentId || response?.document_id || null;
+      // Get document ID - tentar diferentes estruturas possíveis
+      let documentId = null;
+      if (response?.documentId) {
+        documentId = response.documentId;
+      } else if (response?.document_id) {
+        documentId = response.document_id;
+      } else if (response?.data?.documentId) {
+        documentId = response.data.documentId;
+      } else if (response?.data?.document_id) {
+        documentId = response.data.document_id;
+      } else if (response?.data?.data?.documentId) {
+        documentId = response.data.data.documentId;
+      } else if (response?.data?.data?.document_id) {
+        documentId = response.data.data.document_id;
+      }
+      
       if (!documentId) {
         throw new Error('Não foi possível obter o ID do documento após o upload');
       }
@@ -445,7 +743,8 @@ const ChatContainer = () => {
       setUploadStatus(prev => ({
         ...prev,
         documentId,
-        progress: 60
+        progress: 60,
+        status: 'analyzing'
       }));
       
       // Poll for document status
@@ -456,7 +755,8 @@ const ChatContainer = () => {
         setUploadStatus(prev => ({
           ...prev,
           active: false,
-          progress: 100
+          progress: 100,
+          status: 'completed'
         }));
         
         // Show success message
@@ -476,6 +776,10 @@ const ChatContainer = () => {
         );
       } else {
         // Error in processing
+        setUploadStatus(prev => ({
+          ...prev,
+          status: 'error'
+        }));
         throw new Error(pollResult.error || 'Erro durante o processamento do documento');
       }
     } catch (error) {
@@ -487,7 +791,8 @@ const ChatContainer = () => {
         documentId: null,
         filename: file.name,
         error: error.message || 'Erro desconhecido',
-        progress: 0
+        progress: 0,
+        status: 'error'
       });
       
       // Show error message
@@ -511,27 +816,6 @@ const ChatContainer = () => {
     // Reload associated documents
     if (currentConversation) {
       loadAssociatedDocuments(currentConversation.conversation_id);
-    }
-  };
-  
-  // Check for visualization data in the assistant's message
-  const checkForVisualizationData = (content) => {
-    try {
-      // Look for JSON data wrapped in visualization markers
-      const regex = /```visualization\s*([\s\S]*?)\s*```/;
-      const match = content.match(regex);
-      
-      if (match && match[1]) {
-        const dataString = match[1].trim();
-        const data = JSON.parse(dataString);
-        
-        if (Array.isArray(data) && data.length > 0) {
-          setVisualizationData(data);
-          setShowVisualization(true);
-        }
-      }
-    } catch (error) {
-      console.error('Error parsing visualization data:', error);
     }
   };
   
@@ -689,13 +973,27 @@ const ChatContainer = () => {
               flexDirection: 'column'
             }}
           >
+            {/* Visualização de processamento de documentos */}
+            {uploadStatus.active && (
+              <Box sx={{ px: 2, pt: 2 }}>
+                <ProcessingFeedback 
+                  status={uploadStatus.status}
+                  progress={uploadStatus.progress}
+                  filename={uploadStatus.filename}
+                  error={uploadStatus.error}
+                />
+              </Box>
+            )}
+            
             {/* Visualization */}
             {showVisualization && visualizationData && (
               <Fade in={showVisualization}>
                 <Box sx={{ p: 2 }}>
                   <VisualizationContainer 
-                    data={visualizationData} 
-                    title="Data Visualization"
+                    data={visualizationData.data}
+                    type={visualizationData.type || 'bar'}
+                    title={visualizationData.title || "Visualização de Dados"}
+                    options={visualizationData.options || {}}
                   />
                 </Box>
               </Fade>
@@ -758,74 +1056,91 @@ const ChatContainer = () => {
   };
   
   return (
-    <Box sx={{ 
-      height: '100vh', 
-      display: 'flex', 
-      bgcolor: theme.palette.background.default 
-    }}>
-      {/* Hidden file input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        style={{ display: 'none' }}
-        onChange={handleFileSelect}
-        accept=".pdf,.docx,.xlsx,.xls,.csv,.json,.txt,.jpg,.jpeg,.png"
-      />
-      
-      {/* Sidebar */}
-      <ClaudiaSidebar
-        conversations={conversations}
-        currentConversation={currentConversation}
-        onNewChat={handleNewChat}
-        onSelectConversation={handleSelectConversation}
-        onLogout={() => {
-          // Handle logout
-        }}
-        onToggleSidebar={() => setSidebarExpanded(!sidebarExpanded)}
-        expanded={sidebarExpanded}
-      />
-      
-      {/* Main content */}
-      <Box
-        component="main"
+    <ClickAwayListener onClickAway={handleClickAway}>
+      <Box 
+        ref={containerRef}
         sx={{ 
-          flexGrow: 1, 
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100%',
-          overflow: 'hidden',
-          position: 'relative'
+          height: '100vh', 
+          display: 'flex', 
+          bgcolor: theme.palette.background.default,
+          position: 'relative',
         }}
       >
-        {renderContent()}
-      </Box>
-      
-      {/* Notifications */}
-      <Snackbar 
-        open={alertInfo.open} 
-        autoHideDuration={alertInfo.autoHideDuration} 
-        onClose={handleCloseAlert}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        sx={{ mb: 1 }}
-      >
-        <Alert 
-          onClose={handleCloseAlert} 
-          severity={alertInfo.severity} 
-          sx={{ width: '100%' }}
-          action={alertInfo.action}
+        {/* Hidden file input */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+          accept=".pdf,.docx,.xlsx,.xls,.csv,.json,.txt,.jpg,.jpeg,.png"
+        />
+        
+        {/* Sidebar */}
+        <ClaudiaSidebar
+          data-testid="claudia-sidebar"
+          conversations={conversations}
+          currentConversation={currentConversation}
+          onNewChat={handleNewChat}
+          onSelectConversation={handleSelectConversation}
+          onLogout={() => {
+            // Handle logout
+          }}
+          onToggleSidebar={() => setSidebarExpanded(!sidebarExpanded)}
+          expanded={sidebarExpanded}
+          alwaysShowExpandButton={true}  // Adicionado para sempre mostrar o botão de expandir
+        />
+        
+        {/* Main content */}
+        <Box
+          component="main"
+          sx={{ 
+            flexGrow: 1, 
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            overflow: 'hidden',
+            position: 'relative'
+          }}
         >
-          {alertInfo.message}
-        </Alert>
-      </Snackbar>
-      
-      {/* Loading overlay */}
-      <Backdrop
-        sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1 }}
-        open={isLoading}
-      >
-        <CircularProgress color="inherit" />
-      </Backdrop>
-    </Box>
+          {renderContent()}
+        </Box>
+        
+        {/* Notifications */}
+        <Snackbar 
+          open={alertInfo.open} 
+          autoHideDuration={alertInfo.autoHideDuration} 
+          onClose={handleCloseAlert}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          sx={{ mb: 1 }}
+        >
+          <Alert 
+            onClose={handleCloseAlert} 
+            severity={alertInfo.severity} 
+            sx={{ width: '100%' }}
+            action={alertInfo.action}
+          >
+            {alertInfo.message}
+          </Alert>
+        </Snackbar>
+        
+        {/* Loading overlay */}
+        <Backdrop
+          sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1 }}
+          open={isLoading}
+        >
+          <CircularProgress color="inherit" />
+        </Backdrop>
+
+        {/* Visualization Drawer */}
+        <VisualizationDrawer
+          open={showVisualization}
+          onClose={() => setShowVisualization(false)}
+          customVisualizations={visualizationData ? [visualizationData] : null}
+          conversationId={currentConversation?.conversation_id}
+          messageId={visualizationData?.messageId}
+        />
+      </Box>
+    </ClickAwayListener>
   );
 };
 

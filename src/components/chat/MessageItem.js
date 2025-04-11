@@ -36,10 +36,17 @@ import {
   Reply as ReplyIcon,
   Star as StarIcon,
   StarBorder as StarBorderIcon,
-  FormatQuote as QuoteIcon
+  FormatQuote as QuoteIcon,
+  BarChart as ChartIcon,
+  Fullscreen as FullscreenIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import ClaudiaLogo from '../layout/ClaudiaLogo';
+
+// Integração com visualizações
+import { useVisualization } from '../../hooks/useVisualization';
+import VisualizationContainer from '../visualization/VisualizationContainer';
+import VisualizationActions from '../visualization/VisualizationActions';
 
 // Componente para exibir referências de documentos
 const DocumentReferences = ({ references, onViewDocument }) => {
@@ -377,6 +384,24 @@ const MessageItem = ({
   const [copied, setCopied] = useState(false);
   const [starred, setStarred] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [messageVisualization, setMessageVisualization] = useState(null);
+  
+  // Hook de visualização para processar mensagens
+  const { extractVisualizationFromMessage, openVisualization } = useVisualization();
+  
+  // Detectar visualizações na mensagem
+  useEffect(() => {
+    if (message?.role === 'assistant' && message?.content) {
+      const vizData = extractVisualizationFromMessage(message.content);
+      if (vizData) {
+        setMessageVisualization({
+          ...vizData,
+          messageId: message.message_id,
+          conversationId: message.conversation_id
+        });
+      }
+    }
+  }, [message, extractVisualizationFromMessage]);
   
   // Manipuladores do menu de contexto
   const handleMenuClick = (event) => {
@@ -556,7 +581,7 @@ const MessageItem = ({
                 </Tooltip>
               )}
               
-              {/* Indicador de documento referenciado (novo) */}
+              {/* Indicador de documento referenciado */}
               {isAssistant && hasReferences && (
                 <Tooltip title="Baseado em documentos">
                   <Chip
@@ -569,6 +594,25 @@ const MessageItem = ({
                       fontWeight: 500,
                       bgcolor: alpha(theme.palette.success.main, 0.1),
                       color: theme.palette.success.main,
+                      '& .MuiChip-label': { px: 0.5 }
+                    }}
+                  />
+                </Tooltip>
+              )}
+              
+              {/* Indicador de visualização */}
+              {isAssistant && messageVisualization && (
+                <Tooltip title="Contém visualização">
+                  <Chip
+                    icon={<ChartIcon sx={{ fontSize: '0.7rem !important' }} />}
+                    label="Visualização"
+                    size="small"
+                    sx={{ 
+                      height: 20, 
+                      fontSize: '0.65rem',
+                      fontWeight: 500,
+                      bgcolor: alpha(theme.palette.primary.main, 0.1),
+                      color: theme.palette.primary.main,
                       '& .MuiChip-label': { px: 0.5 }
                     }}
                   />
@@ -649,6 +693,49 @@ const MessageItem = ({
               '& p:last-of-type': { mb: 0 },
             }}>
               <MessageContent content={message.content} />
+              
+              {/* Visualização incorporada na mensagem */}
+              {messageVisualization && (
+                <Box sx={{ mt: 2, mb: 1 }}>
+                  <Paper 
+                    variant="outlined" 
+                    sx={{ 
+                      p: 2, 
+                      borderRadius: 2,
+                      bgcolor: theme.palette.mode === 'dark' 
+                        ? alpha(theme.palette.background.paper, 0.2) 
+                        : alpha(theme.palette.background.paper, 0.5)
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
+                        {messageVisualization.title || 'Visualização de Dados'}
+                      </Typography>
+                      <VisualizationActions 
+                        visualization={messageVisualization}
+                        conversationId={message.conversation_id}
+                        messageId={message.message_id}
+                      />
+                    </Box>
+                    
+                    <VisualizationContainer 
+                      data={messageVisualization.data}
+                      type={messageVisualization.type || 'bar'}
+                      height={220}
+                      options={messageVisualization.options || {}}
+                    />
+                    
+                    <Button 
+                      size="small" 
+                      startIcon={<FullscreenIcon fontSize="small" />}
+                      sx={{ mt: 1 }} 
+                      onClick={() => openVisualization(messageVisualization)}
+                    >
+                      Expandir visualização
+                    </Button>
+                  </Paper>
+                </Box>
+              )}
               
               {/* Componente de referências de documentos */}
               {isAssistant && hasReferences && (
