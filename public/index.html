@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    
+    <!-- Favicons -->
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/eye-logo.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16x16.png" />
+    <link rel="mask-icon" href="%PUBLIC_URL%/safari-pinned-tab.svg" color="#5B52F3" />
+    <meta name="msapplication-TileColor" content="#5B52F3" />
+    
+    <!-- Meta tags -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#5B52F3" />
+    <meta name="description" content="Claud.IA - Assistente inteligente para análise de documentos e visualização de dados" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    
+    <!-- Manifesto PWA -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Preconnect para carregamento otimizado de fontes -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Montserrat para o logo (pesos específicos) -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Inter para o conteúdo geral -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Preload da fonte principal para melhor performance -->
+    <link rel="preload" href="https://fonts.gstatic.com/s/montserrat/v25/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Uw-Y3tcoqK5.woff2" as="font" type="font/woff2" crossorigin>
+    
+    <!-- Estilos base e animações -->
+    <style>
+      /* Estilos gerais da aplicação */
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        overflow-x: hidden;
+      }
+      
+      #root {
+        height: 100%;
+      }
+      
+      /* Animação para o olho piscar */
+      @keyframes blink {
+        0%, 97% { transform: scaleY(1); }
+        98.5% { transform: scaleY(0.15); }
+        100% { transform: scaleY(1); }
+      }
+      
+      /* Melhorias para scrollbars */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 10px;
+      }
+      
+      ::-webkit-scrollbar-thumb {
+        background: rgba(91, 82, 243, 0.2);
+        border-radius: 10px;
+      }
+      
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(91, 82, 243, 0.3);
+      }
+      
+      /* Scrollbars para modo escuro */
+      @media (prefers-color-scheme: dark) {
+        ::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.04);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+          background: rgba(124, 100, 249, 0.3);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(124, 100, 249, 0.4);
+        }
+      }
+      
+      /* Melhorias para a renderização de fontes */
+      .logo-text {
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+      }
+      
+      /* Animação de carregamento inicial da aplicação */
+      .app-loader {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, rgba(245,247,250,0.95) 0%, rgba(245,247,250,1) 100%);
+        z-index: 9999;
+      }
+      
+      @media (prefers-color-scheme: dark) {
+        .app-loader {
+          background: linear-gradient(180deg, rgba(16,20,30,0.95) 0%, rgba(16,20,30,1) 100%);
+        }
+      }
+      
+      .app-loader__eye {
+        width: 80px;
+        height: 80px;
+        position: relative;
+        opacity: 0;
+        animation: fadeIn 0.5s ease-in-out forwards;
+      }
+      
+      @keyframes fadeIn {
+        0% { opacity: 0; transform: scale(0.9); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      
+      .app-loader__pulse {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: rgba(91, 82, 243, 0.1);
+        animation: pulse 1.5s infinite ease-in-out;
+      }
+      
+      @keyframes pulse {
+        0% { transform: scale(0.95); opacity: 1; }
+        70% { transform: scale(1.2); opacity: 0; }
+        100% { transform: scale(0.95); opacity: 0; }
+      }
+    </style>
+    
+    <title>Claud.IA</title>
+  </head>
+  <body>
+    <noscript>Você precisa habilitar o JavaScript para executar este aplicativo.</noscript>
+    
+    <!-- Loader que será exibido enquanto o React inicia -->
+    <div id="initial-loader" class="app-loader">
+      <div class="app-loader__pulse"></div>
+      <div class="app-loader__eye">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+          <!-- Círculo branco de fundo -->
+          <circle cx="32" cy="32" r="32" fill="white" 
+            style="filter: drop-shadow(0 4px 20px rgba(91, 82, 243, 0.2));" />
+          
+          <!-- Olho (forma oval) -->
+          <defs>
+            <linearGradient id="eyeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#5B52F3" />
+              <stop offset="100%" stop-color="#7C64F9" />
+            </linearGradient>
+          </defs>
+          
+          <ellipse cx="32" cy="32" rx="20" ry="12" fill="url(#eyeGradient)" 
+            style="animation: blink 3s infinite;" />
+          
+          <!-- Pupila (círculo branco) -->
+          <circle cx="32" cy="32" r="5.5" fill="white" />
+          
+          <!-- Brilho principal do olho -->
+          <circle cx="39" cy="28" r="3" fill="white" fill-opacity="0.8" />
+          
+          <!-- Brilho secundário do olho -->
+          <circle cx="26" cy="31" r="1.8" fill="white" fill-opacity="0.5" />
+        </svg>
+      </div>
+    </div>
+    
+    <!-- Root container para a aplicação React -->
+    <div id="root"></div>
+    
+    <script>
+      // Remove o loader quando a aplicação React estiver pronta
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          var loader = document.getElementById('initial-loader');
+          if (loader) {
+            loader.style.opacity = '0';
+            loader.style.transition = 'opacity 0.5s ease';
+            setTimeout(function() {
+              if (loader && loader.parentNode) {
+                loader.parentNode.removeChild(loader);
+              }
+            }, 500);
+          }
+        }, 500); // Pequeno delay para garantir que o React foi inicializado
+      });
+    </script>
+  </body>
+</html>
