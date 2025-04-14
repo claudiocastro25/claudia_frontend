@@ -86,9 +86,6 @@ const DocumentItem = ({ document, onDelete, onView, onAssociate, conversationId 
   const [menuAnchor, setMenuAnchor] = useState(null);
   const isAssociated = conversationId && document.conversations?.includes(conversationId);
   
-  // Lista de status que são considerados completos
-  const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
-  
   // Função para renderizar o ícone correto com base no tipo de arquivo
   const getFileIcon = (fileType) => {
     switch(fileType?.toLowerCase()) {
@@ -105,25 +102,14 @@ const DocumentItem = ({ document, onDelete, onView, onAssociate, conversationId 
   
   // Status com cores e ícones
   const getStatusChip = (status) => {
-    // Lista de status que são considerados completos
-    const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
-    const processingStatuses = ['processing', 'uploading', 'processando', 'em processamento'];
-    const errorStatuses = ['error', 'failed', 'erro', 'falha', 'unavailable'];
+    const statusConfig = {
+      completed: { icon: <CheckIcon fontSize="small" />, color: 'success', label: 'Processado' },
+      processing: { icon: <PendingIcon fontSize="small" />, color: 'warning', label: 'Processando' },
+      pending: { icon: <PendingIcon fontSize="small" />, color: 'warning', label: 'Pendente' },
+      error: { icon: <ErrorIcon fontSize="small" />, color: 'error', label: 'Erro' }
+    };
     
-    // Normalizar o status para facilitar a comparação
-    const normalizedStatus = status ? status.toLowerCase() : '';
-    
-    let config;
-    
-    if (completedStatuses.includes(normalizedStatus)) {
-      config = { icon: <CheckIcon fontSize="small" />, color: 'success', label: 'Processado' };
-    } else if (processingStatuses.includes(normalizedStatus)) {
-      config = { icon: <PendingIcon fontSize="small" />, color: 'warning', label: 'Processando' };
-    } else if (errorStatuses.includes(normalizedStatus)) {
-      config = { icon: <ErrorIcon fontSize="small" />, color: 'error', label: 'Erro' };
-    } else {
-      config = { icon: <PendingIcon fontSize="small" />, color: 'warning', label: 'Pendente' };
-    }
+    const config = statusConfig[status] || statusConfig.pending;
     
     return (
       <Chip 
@@ -205,7 +191,7 @@ const DocumentItem = ({ document, onDelete, onView, onAssociate, conversationId 
               onView(document);
               setMenuAnchor(null);
             }}
-            disabled={!completedStatuses.includes(document.status?.toLowerCase())}
+            disabled={document.status !== 'completed'}
           >
             <ListItemIcon>
               <SearchIcon fontSize="small" />

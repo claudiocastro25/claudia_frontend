@@ -7,6 +7,7 @@ import documentService from '../services/documentService';
 const useDocuments = (conversationId) => {
   const [documents, setDocuments] = useState([]);
   const [activeDocument, setActiveDocument] = useState(null);
+  const [activeDocuments, setActiveDocuments] = useState([]); // Faltava esta linha!
   const [documentContent, setDocumentContent] = useState(null);
   const [uploadStatus, setUploadStatus] = useState({
     active: false,
@@ -29,7 +30,7 @@ const useDocuments = (conversationId) => {
       try {
         const health = await documentService.checkDocumentProcessorHealth();
         setProcessorStatus({
-          available: health.available === true, // Corrigido para usar o campo 'available' diretamente
+          available: health.status === 'available',
           checked: true,
           message: health.message || 'Serviço de processamento disponível'
         });
@@ -52,6 +53,7 @@ const useDocuments = (conversationId) => {
       loadDocuments();
     } else {
       setDocuments([]);
+      setActiveDocuments([]); // Limpar também os documentos ativos
     }
   }, [conversationId]);
 
@@ -65,9 +67,23 @@ const useDocuments = (conversationId) => {
     setError(null);
     
     try {
+      console.log(`Carregando documentos para conversa: ${conversationId}`);
+      
       const response = await documentService.getUserDocuments(conversationId);
+      console.log('Resposta completa de documentos:', response);
+      
       if (response.status === 'success' && response.data) {
-        setDocuments(response.data.documents || []);
+        const documents = response.data.documents || [];
+        console.log(`Total de documentos encontrados: ${documents.length}`, documents);
+        
+        // Filtrar documentos ativos (status completed)
+        const activeDocumentsData = documents.filter(doc => doc.status === 'completed');
+        console.log(`Documentos ativos encontrados: ${activeDocumentsData.length}`, activeDocumentsData);
+        
+        setDocuments(documents);
+        setActiveDocuments(activeDocumentsData); // Agora esta linha funcionará corretamente
+      } else {
+        console.warn('Resposta não contém dados ou status não é success:', response);
       }
       setLoading(false);
     } catch (err) {
@@ -110,6 +126,9 @@ const useDocuments = (conversationId) => {
         throw new Error('Não foi possível obter o ID do documento');
       }
       
+      // Log para debug
+      console.log(`Documento enviado com ID: ${documentId}, esperando processamento...`);
+      
       // Update status with document ID
       setUploadStatus(prev => ({
         ...prev,
@@ -129,7 +148,15 @@ const useDocuments = (conversationId) => {
         }));
         
         // Reload documents
+        console.log('Documento processado com sucesso, recarregando lista...'); 
         await loadDocuments();
+        
+        // Forçar uma recarga de documentos após um curto intervalo
+        // para garantir que o backend completou todo o processamento
+        setTimeout(() => {
+          console.log('Recarga adicional após 2 segundos');
+          loadDocuments();
+        }, 2000);
         
         // Return success
         return {
@@ -203,6 +230,9 @@ const useDocuments = (conversationId) => {
       
       // Atualiza lista removendo o documento excluído
       setDocuments(prev => prev.filter(doc => doc.document_id !== documentId));
+      
+      // Também atualizar lista de documentos ativos
+      setActiveDocuments(prev => prev.filter(doc => doc.document_id !== documentId));
       
       // Se for o documento ativo, limpar
       if (activeDocument?.document_id === documentId) {
@@ -299,7 +329,19 @@ const useDocuments = (conversationId) => {
           : doc
       )
     );
-  }, []);
+    
+    // Também atualizar a lista de documentos ativos se necessário
+    if (newStatus === 'completed') {
+      // Encontrar o documento completo
+      const completedDoc = documents.find(doc => doc.document_id === documentId);
+      if (completedDoc) {
+        setActiveDocuments(prev => [...prev, completedDoc]);
+      }
+    } else if (newStatus === 'error') {
+      // Remover documentos com erro da lista de ativos
+      setActiveDocuments(prev => prev.filter(doc => doc.document_id !== documentId));
+    }
+  }, [documents]);
 
   /**
    * Retorna mensagens amigáveis para o status de processamento
@@ -353,17 +395,13 @@ const useDocuments = (conversationId) => {
    */
   const canViewDocument = useCallback((document) => {
     if (!document) return false;
-    
-    // Lista de status que são considerados completos
-    const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
-    
-    // Verificar se o status está na lista de status completados (case insensitive)
-    return document.status && completedStatuses.includes(document.status.toLowerCase());
+    return document.status === 'completed';
   }, []);
 
   return {
     // Estado
     documents,
+    activeDocuments, // Agora estamos exportando activeDocuments corretamente
     activeDocument,
     documentContent,
     uploadStatus,

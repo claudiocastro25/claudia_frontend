@@ -329,8 +329,6 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
           status = response.data.data.status;
         } else if (response.data?.document?.status) {
           status = response.data.document.status;
-        } else if (response.data?.data?.data?.status) {
-          status = response.data.data.data.status;
         }
         
         // Verificação adicional para novos formatos de resposta
@@ -369,14 +367,11 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
         
         console.log(`Status extraído: ${status}, Progresso: ${progress}`);
         
-        // CORREÇÃO: Lista abrangente de status "concluídos" e "erro"
-        const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
-        const errorStatuses = ['error', 'failed', 'erro', 'falha', 'unavailable'];
+        // CORREÇÃO: Checar mais possíveis valores para status "concluído"
+        const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success'];
+        const errorStatuses = ['error', 'failed', 'erro', 'falha'];
         
-        // CORREÇÃO: Converter para minúsculas antes de verificar
-        const statusLower = status ? status.toLowerCase() : '';
-        
-        if (completedStatuses.includes(statusLower)) {
+        if (completedStatuses.includes(status?.toLowerCase())) {
           // Processamento concluído com sucesso
           resolve({ 
             success: true, 
@@ -384,7 +379,7 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
             progress: 100,
             status: 'completed'
           });
-        } else if (errorStatuses.includes(statusLower)) {
+        } else if (errorStatuses.includes(status?.toLowerCase())) {
           // Extrair mensagem de erro de forma robusta
           let errorMessage = 'Erro ao processar documento';
           
@@ -414,11 +409,6 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
           // Continuar esperando
           attempts++;
           
-          // CORREÇÃO: Adicionar verificação para documentos pequenos processados rapidamente
-          // Se o progresso já estiver acima de 80% e status for 'processing', verificar novamente com menor intervalo
-          const adjustedInterval = (progress > 80 && statusLower === 'processing') ? 
-            Math.max(500, interval / 2) : interval;
-          
           // Emitir evento de progresso se estiver definido
           if (window.dispatchEvent && typeof CustomEvent === 'function') {
             window.dispatchEvent(new CustomEvent('document-processing-progress', {
@@ -432,7 +422,7 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
           
           setTimeout(() => {
             pollStatus().then(resolve).catch(reject);
-          }, adjustedInterval);
+          }, interval);
         }
       } catch (error) {
         console.error(`Erro ao verificar status (tentativa ${attempts+1}):`, error);
@@ -678,6 +668,7 @@ export const getUserDocuments = async (conversationId = null) => {
       params.conversationId = conversationId;
     }
     
+    // CORREÇÃO: URL correta sem o prefixo /api
     const response = await api.get('/documents', { params });
     
     // Normalizar a resposta para um formato consistente
