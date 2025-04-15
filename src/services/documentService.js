@@ -3,42 +3,95 @@ import { adaptApiResponse, parseApiError } from './serviceAdapter';
 import { API_ENDPOINTS } from '../constants/apiEndpoints';
 import { extractDocumentId, extractDocumentStatus } from '../utils/apiHelpers';
 
+// URL direta para o processador de documentos
+const DOCUMENT_PROCESSOR_URL = 'http://localhost:8000';
+
 /**
  * Verifica o status de saúde do processador de documentos
+ * Corrigido para usar a URL direta do processador
  * 
  * @returns {Promise<Object>} - Resposta normalizada com status do processador
  */
 export const checkDocumentProcessorHealth = async () => {
   try {
-    const response = await api.get(API_ENDPOINTS.DOCUMENTS.PROCESSOR_HEALTH);
-    const adaptedResponse = adaptApiResponse(response);
+    // Tentar diretamente no processador Python primeiro (URL correta)
+    const response = await fetch(`${DOCUMENT_PROCESSOR_URL}/health`);
+    const data = await response.json();
     
-    // Extrair e normalizar a resposta
-    let isAvailable = false;
-    let statusMessage = 'Serviço de processamento indisponível';
+    console.log('Resposta direta do processador de documentos:', data);
     
-    if (adaptedResponse.data) {
-      if (adaptedResponse.data.available === true) {
-        isAvailable = true;
-        statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
-      } else if (adaptedResponse.data.status === 'available') {
-        isAvailable = true;
-        statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
-      }
+    // Verificar se o processador está saudável diretamente
+    if (data.status === 'healthy') {
+      return {
+        status: 'available',
+        message: 'Serviço de processamento disponível',
+        available: true,
+        details: data
+      };
     }
     
-    return {
-      status: isAvailable ? 'available' : 'unavailable',
-      message: statusMessage,
-      available: isAvailable
-    };
-  } catch (error) {
-    console.error('Erro ao verificar saúde do processador:', error);
+    // Caso a resposta não contenha status healthy
     return {
       status: 'unavailable',
-      message: 'Serviço de processamento indisponível',
+      message: 'Serviço de processamento indisponível ou com problemas',
       available: false
     };
+  } catch (directError) {
+    console.warn('Erro ao acessar diretamente o processador:', directError);
+    
+    // Tentar pelo API Gateway (método antigo) como fallback
+    try {
+      const response = await api.get(API_ENDPOINTS.DOCUMENTS.PROCESSOR_HEALTH);
+      const adaptedResponse = adaptApiResponse(response);
+      
+      // Extrair e normalizar a resposta
+      let isAvailable = false;
+      let statusMessage = 'Serviço de processamento indisponível';
+      
+      if (adaptedResponse.data) {
+        // Verificar diretamente no payload principal
+        if (adaptedResponse.data.available === true) {
+          isAvailable = true;
+          statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
+        } 
+        // Verificar no nível extra adicionado pelo controller
+        else if (adaptedResponse.data.data && adaptedResponse.data.data.available === true) {
+          isAvailable = true;
+          statusMessage = adaptedResponse.data.data.message || 'Serviço de processamento disponível';
+        } 
+        // Verificação alternativa para 'status' = 'healthy' no backend
+        else if (adaptedResponse.data.status === 'healthy' || adaptedResponse.data.status === 'available') {
+          isAvailable = true;
+          statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
+        }
+        // Verificação para quando status está aninhado dentro de data.data
+        else if (adaptedResponse.data.data && 
+                (adaptedResponse.data.data.status === 'healthy' || 
+                 adaptedResponse.data.data.status === 'available')) {
+          isAvailable = true;
+          statusMessage = adaptedResponse.data.data.message || 'Serviço de processamento disponível';
+        }
+        // Verificar se há detalhes aninhados com status
+        else if (adaptedResponse.data.data && adaptedResponse.data.data.details && 
+                 adaptedResponse.data.data.details.status === 'healthy') {
+          isAvailable = true;
+          statusMessage = adaptedResponse.data.data.message || 'Serviço de processamento disponível';
+        }
+      }
+      
+      return {
+        status: isAvailable ? 'available' : 'unavailable',
+        message: statusMessage,
+        available: isAvailable
+      };
+    } catch (apiError) {
+      console.error('Erro ao verificar saúde do processador via API:', apiError);
+      return {
+        status: 'unavailable',
+        message: 'Serviço de processamento indisponível',
+        available: false
+      };
+    }
   }
 };
 
@@ -86,7 +139,11 @@ export const uploadDocument = async (file, conversationId) => {
     };
   } catch (error) {
     console.error('Erro ao fazer upload do documento:', error);
-    throw parseApiError(error, 'Falha ao fazer upload do documento');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao fazer upload do documento',
+      error: error
+    };
   }
 };
 
@@ -123,7 +180,11 @@ export const uploadDocumentWithoutConversation = async (file) => {
     };
   } catch (error) {
     console.error('Erro ao fazer upload temporário:', error);
-    throw parseApiError(error, 'Falha ao fazer upload temporário do documento');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao fazer upload temporário do documento',
+      error: error
+    };
   }
 };
 
@@ -151,7 +212,11 @@ export const associateDocumentWithConversation = async (documentId, conversation
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao associar documento à conversa:', error);
-    throw parseApiError(error, 'Falha ao associar documento à conversa');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao associar documento à conversa',
+      error: error
+    };
   }
 };
 
@@ -181,7 +246,11 @@ export const getTemporaryDocuments = async () => {
     };
   } catch (error) {
     console.error('Erro ao obter documentos temporários:', error);
-    throw parseApiError(error, 'Falha ao obter documentos temporários');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao obter documentos temporários',
+      error: error
+    };
   }
 };
 
@@ -217,7 +286,11 @@ export const getConversationDocuments = async (conversationId) => {
     };
   } catch (error) {
     console.error('Erro ao obter documentos da conversa:', error);
-    throw parseApiError(error, 'Falha ao obter documentos da conversa');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao obter documentos da conversa',
+      error: error
+    };
   }
 };
 
@@ -237,7 +310,11 @@ export const getDocumentContent = async (documentId) => {
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao obter conteúdo do documento:', error);
-    throw parseApiError(error, 'Falha ao obter conteúdo do documento');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao obter conteúdo do documento',
+      error: error
+    };
   }
 };
 
@@ -362,7 +439,11 @@ export const deleteDocument = async (documentId) => {
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao excluir documento:', error);
-    throw parseApiError(error, 'Falha ao excluir documento');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao excluir documento',
+      error: error
+    };
   }
 };
 
@@ -384,7 +465,11 @@ export const searchDocuments = async (query, conversationId = null) => {
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao buscar documentos:', error);
-    throw parseApiError(error, 'Falha ao buscar documentos');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao buscar documentos',
+      error: error
+    };
   }
 };
 
@@ -404,7 +489,11 @@ export const getDocumentStatus = async (documentId) => {
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao obter status do documento:', error);
-    throw parseApiError(error, 'Falha ao obter status do documento');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao obter status do documento',
+      error: error
+    };
   }
 };
 
@@ -441,7 +530,11 @@ export const getUserDocuments = async (conversationId = null) => {
     };
   } catch (error) {
     console.error('Erro ao obter documentos do usuário:', error);
-    throw parseApiError(error, 'Falha ao obter documentos do usuário');
+    return {
+      status: 'error',
+      message: error.message || 'Falha ao obter documentos do usuário',
+      error: error
+    };
   }
 };
 
