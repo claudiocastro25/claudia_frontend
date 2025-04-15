@@ -7,11 +7,11 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 // Páginas e Componentes
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-
 import ChatContainer from './components/chat/ChatContainer';
 
 // Componentes e Contextos
 import { AuthProvider } from './contexts/AuthContext';
+import { DocumentProvider } from './contexts/DocumentContext';
 import { VisualizationProvider } from './contexts/VisualizationContext';
 import PrivateRoute from './components/layout/PrivateRoute';
 
@@ -40,7 +40,6 @@ const createAppTheme = (mode) => {
         primary: mode === 'dark' ? '#F9FAFB' : '#111827',
         secondary: mode === 'dark' ? '#D1D5DB' : '#6B7280',
       },
-      // Adicionando a paleta action que estava faltando
       action: {
         active: mode === 'dark' ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.6)',
         hover: mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.04)',
@@ -62,7 +61,6 @@ const createAppTheme = (mode) => {
         900: '#111827',
       },
       divider: mode === 'dark' ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)',
-      // Outras propriedades da paleta que podem ser necessárias
       error: {
         main: '#EF4444',
         light: '#F87171',
@@ -186,23 +184,26 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <VisualizationProvider>
-          <Router>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route 
-                path="/chat" 
-                element={
-                  <PrivateRoute>
-                    <ChatContainer toggleColorMode={toggleColorMode} colorMode={mode} />
-                  </PrivateRoute>
-                } 
-              />
-              <Route path="/" element={<Navigate to="/login" replace />} />
-            </Routes>
-          </Router>
-        </VisualizationProvider>
+        <DocumentProvider>
+          <VisualizationProvider>
+            <Router>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route 
+                  path="/chat/*" 
+                  element={
+                    <PrivateRoute>
+                      <ChatContainer toggleColorMode={toggleColorMode} colorMode={mode} />
+                    </PrivateRoute>
+                  } 
+                />
+                <Route path="/" element={<Navigate to="/chat" replace />} />
+                <Route path="*" element={<Navigate to="/chat" replace />} />
+              </Routes>
+            </Router>
+          </VisualizationProvider>
+        </DocumentProvider>
       </AuthProvider>
     </ThemeProvider>
   );

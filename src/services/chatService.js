@@ -1,3 +1,4 @@
+// Arquivo: src/services/chatService.js
 import api from './api';
 import { adaptApiResponse, parseApiError } from './serviceAdapter';
 
@@ -8,8 +9,91 @@ import { adaptApiResponse, parseApiError } from './serviceAdapter';
  */
 export const createConversation = async (title = 'Nova Conversa') => {
   try {
+    console.log(`Criando nova conversa com título: "${title}"`);
     const response = await api.post('/api/chat/conversations', { title });
-    return adaptApiResponse(response);
+    
+    // Log da resposta bruta para depuração
+    console.log('Resposta bruta da API:', response?.data);
+    
+    // Antes de adaptar, verificar se a resposta tem a estrutura esperada
+    if (response && response.data && response.data.data && response.data.data.conversation) {
+      console.log('Conversa criada com sucesso:', response.data.data.conversation.conversation_id);
+      return response.data;
+    }
+    
+    // Se não tem a estrutura esperada, tentar adaptar
+    const result = adaptApiResponse(response);
+    
+    // Verificar estrutura após adaptação
+    if (result.data && !result.data.conversation) {
+      const actualResponse = response?.data;
+      // Verificar se conversation está em algum lugar inesperado
+      if (actualResponse && typeof actualResponse === 'object') {
+        // Procurar conversation_id diretamente na resposta
+        if (actualResponse.conversation_id) {
+          // Transformar em um formato compatível
+          result.data = {
+            conversation: {
+              conversation_id: actualResponse.conversation_id,
+              title: actualResponse.title || title,
+              ...actualResponse
+            }
+          };
+          console.log('Encontrado conversation_id diretamente na resposta:', actualResponse.conversation_id);
+        } 
+        // Ver se a estrutura está um nível mais profundo
+        else if (actualResponse.data && actualResponse.data.conversation_id) {
+          result.data = {
+            conversation: {
+              conversation_id: actualResponse.data.conversation_id,
+              title: actualResponse.data.title || title,
+              ...actualResponse.data
+            }
+          };
+          console.log('Encontrado conversation_id um nível mais profundo:', actualResponse.data.conversation_id);
+        }
+        // Ver se conversation está diretamente no resultado da consulta SQL
+        else if (result.data.conversation_id) {
+          result.data = {
+            conversation: {
+              ...result.data
+            }
+          };
+          console.log('Encontrado conversation_id no resultado adaptado:', result.data.conversation.conversation_id);
+        }
+        // Verificar se a resposta tem uma linha de conversação
+        else if (actualResponse.rows && actualResponse.rows[0] && actualResponse.rows[0].conversation_id) {
+          result.data = {
+            conversation: actualResponse.rows[0]
+          };
+          console.log('Encontrado conversation_id nas linhas da resposta:', actualResponse.rows[0].conversation_id);
+        }
+        // Verificar o formato exato retornado pelo controlador e construir resposta correspondente
+        else if (actualResponse.status === 'success' && actualResponse.data && actualResponse.data.conversation) {
+          // Já está no formato certo, só garantir que está em result.data
+          result.data = actualResponse.data;
+          console.log('Formato correto já está na resposta:', actualResponse.data.conversation.conversation_id);
+        }
+      }
+    }
+    
+    // Verificação final da estrutura
+    if (!result.data || !result.data.conversation || !result.data.conversation.conversation_id) {
+      console.error("Resposta da API em formato incorreto:", result);
+      
+      // Resposta exata do chatController.js com formato esperado
+      // Vamos tentar uma última vez com a estrutura exata que o controlador retorna
+      if (response.data && response.data.status === 'success' && 
+          response.data.data && response.data.data.conversation) {
+        console.log("Usando formato original da API");
+        return response.data;
+      }
+      
+      throw new Error('Falha ao criar nova conversa - ID da conversa não encontrado');
+    }
+    
+    console.log('Conversa criada com sucesso:', result.data.conversation.conversation_id);
+    return result;
   } catch (error) {
     console.error('Chat service error:', error);
     throw parseApiError(error, 'Erro ao criar conversa');
@@ -41,8 +125,12 @@ export const getConversation = async (conversationId) => {
   }
   
   try {
+    console.log(`Obtendo conversa: ${conversationId}`);
     const response = await api.get(`/api/chat/conversations/${conversationId}`);
-    return adaptApiResponse(response);
+    
+    const result = adaptApiResponse(response);
+    console.log(`Conversa obtida com sucesso, ${result.data?.messages?.length || 0} mensagens`);
+    return result;
   } catch (error) {
     console.error('Chat service error:', error);
     
@@ -86,6 +174,8 @@ export const sendMessage = async (conversationId, content, documentContext = nul
   }
   
   try {
+    console.log(`Enviando mensagem para conversa ${conversationId}${documentContext ? ' com contexto de documentos' : ''}`);
+    
     // Montar o payload com o campo correto (message)
     const payload = {
       message: content
@@ -94,10 +184,15 @@ export const sendMessage = async (conversationId, content, documentContext = nul
     // Adicionar contexto de documentos se fornecido
     if (documentContext) {
       payload.document_context = documentContext;
+      console.log(`Contexto de documentos fornecido: ${documentContext.length} caracteres`);
     }
     
     const response = await api.post(`/api/chat/conversations/${conversationId}/messages`, payload);
-    return adaptApiResponse(response);
+    
+    const result = adaptApiResponse(response);
+    console.log('Mensagem enviada com sucesso:', 
+      result.data?.assistantMessage?.message_id || 'ID não encontrado');
+    return result;
   } catch (error) {
     console.error('Chat service error:', error);
     
@@ -201,6 +296,25 @@ export const checkConversationExists = async (conversationId) => {
   }
 };
 
+/**
+ * Gera feedback de contexto sobre o uso de RAG na resposta
+ * @param {Object} ragInfo - Informações do RAG
+ * @returns {string} - Feedback formatado para o usuário
+ */
+export const generateRagFeedback = (ragInfo) => {
+  if (!ragInfo || !ragInfo.hasDocuments || !ragInfo.usedDocuments || ragInfo.usedDocuments.length === 0) {
+    return '';
+  }
+  
+  const docCount = ragInfo.usedDocuments.length;
+  const docNames = ragInfo.usedDocuments
+    .map(doc => doc.filename || doc.original_filename || 'Documento')
+    .slice(0, 3)
+    .join(', ');
+  
+  return `A resposta foi baseada em ${docCount} ${docCount === 1 ? 'documento' : 'documentos'}${docCount <= 3 ? `: ${docNames}` : ''}.`;
+};
+
 export default {
   createConversation,
   getConversations,
@@ -209,5 +323,6 @@ export default {
   deleteConversation,
   updateConversationTitle,
   getPromptSuggestions,
-  checkConversationExists
+  checkConversationExists,
+  generateRagFeedback
 };

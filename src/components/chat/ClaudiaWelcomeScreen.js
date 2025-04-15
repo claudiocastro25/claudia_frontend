@@ -31,9 +31,14 @@ import {
   FileImage,
   Send
 } from 'lucide-react';
-import ClaudIAEyeLogo from '../../components/layout/ClaudiaLogo'; // Importe o componente do logo com o olho
 
-// Suggested prompts by category
+// Componentes
+import ClaudIAEyeLogo from '../layout/ClaudiaLogo';
+
+// Contextos
+import { useDocumentContext } from '../../contexts/DocumentContext';
+
+// Sugestões de prompts por categoria
 const EXAMPLE_PROMPTS = {
   documents: [
     "Analise este contrato e destaque as cláusulas importantes",
@@ -61,7 +66,7 @@ const EXAMPLE_PROMPTS = {
   ]
 };
 
-// Tab configuration
+// Configuração de abas
 const TABS = [
   { id: 'documents', label: 'Documentos', icon: <FileText size={18} /> },
   { id: 'dataAnalysis', label: 'Análise de Dados', icon: <BarChart2 size={18} /> },
@@ -69,7 +74,7 @@ const TABS = [
   { id: 'research', label: 'Pesquisa', icon: <BookOpen size={18} /> },
 ];
 
-// Document types supported
+// Tipos de documentos suportados
 const DOCUMENT_TYPES = [
   { label: "PDF", icon: <FileText size={14} /> },
   { label: "Word", icon: <FileText size={14} /> },
@@ -79,11 +84,14 @@ const DOCUMENT_TYPES = [
   { label: "Texto", icon: <MessageSquare size={14} /> },
 ];
 
+/**
+ * Tela de boas-vindas do Chat
+ * Renderizada quando não há conversa ativa
+ */
 const ClaudiaWelcomeScreen = ({ 
   onStartChat, 
   onPromptSelected, 
   onUpload, 
-  processorAvailable = true,
   sidebarWidth = 280,
   sidebarExpanded = true
 }) => {
@@ -94,10 +102,13 @@ const ClaudiaWelcomeScreen = ({
   const [activeTab, setActiveTab] = useState('documents');
   const [currentSuggestion, setCurrentSuggestion] = useState(0);
   
-  // Get the current prompts based on active tab
+  // Obter status do processador do contexto
+  const { processorStatus } = useDocumentContext();
+  
+  // Obter os prompts atuais com base na aba ativa
   const currentPrompts = EXAMPLE_PROMPTS[activeTab] || [];
   
-  // Effect for auto-rotating suggestions - mais lenta (8s)
+  // Efeito para rotação automática de sugestões
   useEffect(() => {
     const interval = setInterval(() => {
       setCurrentSuggestion((prev) => (prev + 1) % currentPrompts.length);
@@ -106,19 +117,19 @@ const ClaudiaWelcomeScreen = ({
     return () => clearInterval(interval);
   }, [currentPrompts]);
   
-  // Reset suggestion index when changing tabs
+  // Resetar índice de sugestão ao mudar de aba
   useEffect(() => {
     setCurrentSuggestion(0);
   }, [activeTab]);
   
-  // Handle sending the message
+  // Manipular envio de mensagem
   const handleSendMessage = () => {
     if (message.trim() && onPromptSelected) {
       onPromptSelected(message);
     }
   };
   
-  // Handle Enter key press
+  // Manipular tecla Enter
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && message.trim()) {
       e.preventDefault();
@@ -126,14 +137,14 @@ const ClaudiaWelcomeScreen = ({
     }
   };
 
-  // Select the current suggestion
+  // Selecionar a sugestão atual
   const handleSelectCurrentSuggestion = () => {
     if (onPromptSelected && currentPrompts[currentSuggestion]) {
       onPromptSelected(currentPrompts[currentSuggestion]);
     }
   };
   
-  // Navigation for suggestions
+  // Navegação para sugestões
   const handleNextSuggestion = (e) => {
     e.stopPropagation();
     setCurrentSuggestion((prev) => (prev + 1) % currentPrompts.length);
@@ -144,7 +155,7 @@ const ClaudiaWelcomeScreen = ({
     setCurrentSuggestion((prev) => (prev - 1 + currentPrompts.length) % currentPrompts.length);
   };
 
-  // Handle tab change
+  // Manipular mudança de aba
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
   };
@@ -199,23 +210,23 @@ const ClaudiaWelcomeScreen = ({
         >
           {/* Logo do olho com texto moderno integrado */}
           <Box 
-  sx={{ 
-    display: 'flex', 
-    flexDirection: 'column', 
-    alignItems: 'center',
-    position: 'relative',
-    pb: 1,
-    mb: 2,
-    mt: 1
-  }}
->
-  <ClaudIAEyeLogo 
-    size="xlarge" 
-    showText={true} 
-    withAnimation={true} 
-    blinkInterval={10}
-  />
-</Box>
+            sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              position: 'relative',
+              pb: 1,
+              mb: 2,
+              mt: 1
+            }}
+          >
+            <ClaudIAEyeLogo 
+              size="xlarge" 
+              showText={true} 
+              withAnimation={true} 
+              blinkInterval={10}
+            />
+          </Box>
           
           <Typography 
             variant="h6" 
@@ -468,7 +479,7 @@ const ClaudiaWelcomeScreen = ({
               
               <Button
                 variant="outlined"
-                disabled={!processorAvailable}
+                disabled={!processorStatus.available}
                 onClick={onUpload}
                 startIcon={<FileUp size={18} />}
                 fullWidth={isTablet}

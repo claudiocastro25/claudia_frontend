@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-// Base URL com o sufixo /api para garantir o formato correto dos endpoints
+// URL base para a API
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5002/api';
 
 // Create axios instance

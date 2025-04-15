@@ -1,4 +1,7 @@
 import api from './api';
+import { adaptApiResponse, parseApiError } from './serviceAdapter';
+import { API_ENDPOINTS } from '../constants/apiEndpoints';
+import { extractDocumentId, extractDocumentStatus } from '../utils/apiHelpers';
 
 /**
  * Verifica o status de saúde do processador de documentos
@@ -7,41 +10,20 @@ import api from './api';
  */
 export const checkDocumentProcessorHealth = async () => {
   try {
-    const response = await api.get('/documents/processor-health');
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.PROCESSOR_HEALTH);
+    const adaptedResponse = adaptApiResponse(response);
     
-    console.log('Resposta original do health check:', response.data);
-    
-    // Normalizar a resposta para um formato consistente
+    // Extrair e normalizar a resposta
     let isAvailable = false;
     let statusMessage = 'Serviço de processamento indisponível';
     
-    // Verificar diversas possibilidades na estrutura da resposta
-    if (response.data) {
-      if (response.data.data?.available === true) {
-        // Formato: { data: { available: true } }
+    if (adaptedResponse.data) {
+      if (adaptedResponse.data.available === true) {
         isAvailable = true;
-        statusMessage = response.data.data.message || 'Serviço de processamento disponível';
-      } else if (response.data.available === true) {
-        // Formato: { available: true }
+        statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
+      } else if (adaptedResponse.data.status === 'available') {
         isAvailable = true;
-        statusMessage = response.data.message || 'Serviço de processamento disponível';
-      } else if (response.data.status === 'available') {
-        // Formato: { status: 'available' }
-        isAvailable = true;
-        statusMessage = response.data.message || 'Serviço de processamento disponível';
-      } else if (response.data.status === 'success') {
-        // Formato: { status: 'success' } - verificando informações adicionais
-        if (response.data.data?.available === false) {
-          isAvailable = false;
-          statusMessage = response.data.data.message || 'Serviço de processamento indisponível';
-        } else if (response.data.data?.available === true) {
-          isAvailable = true;
-          statusMessage = response.data.data.message || 'Serviço de processamento disponível';
-        } else {
-          // Se não tiver indicação clara, assumimos que success significa disponível
-          isAvailable = true;
-          statusMessage = response.data.message || 'Serviço de processamento disponível';
-        }
+        statusMessage = adaptedResponse.data.message || 'Serviço de processamento disponível';
       }
     }
     
@@ -81,52 +63,35 @@ export const uploadDocument = async (file, conversationId) => {
     formData.append('file', file);
     formData.append('conversationId', conversationId);
     
-    const response = await api.post('/documents/upload', formData, {
+    const response = await api.post(API_ENDPOINTS.DOCUMENTS.UPLOAD, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
     
-    // Normalizar a resposta para garantir consistência
-    const responseData = response.data;
+    const adaptedResponse = adaptApiResponse(response);
     
-    // Extrair o ID do documento de maneira robusta
-    let documentId = null;
-    if (responseData?.documentId) {
-      documentId = responseData.documentId;
-    } else if (responseData?.document_id) {
-      documentId = responseData.document_id;
-    } else if (responseData?.data?.documentId) {
-      documentId = responseData.data.documentId;
-    } else if (responseData?.data?.document_id) {
-      documentId = responseData.data.document_id;
-    } else if (responseData?.data?.data?.documentId) {
-      documentId = responseData.data.data.documentId;
-    } else if (responseData?.data?.data?.document_id) {
-      documentId = responseData.data.data.document_id;
-    } else if (responseData?.document?.id) {
-      documentId = responseData.document.id;
-    }
+    // Extrair ID do documento
+    const documentId = extractDocumentId(adaptedResponse);
     
     if (!documentId) {
-      console.warn('ID do documento não encontrado na resposta:', responseData);
+      console.warn('ID do documento não encontrado na resposta:', adaptedResponse);
     }
     
-    // Retornar resposta normalizada
+    // Normalizar resposta
     return {
-      ...responseData,
+      ...adaptedResponse,
       documentId,
-      status: responseData.status || 'success'
+      status: adaptedResponse.status || 'success'
     };
   } catch (error) {
     console.error('Erro ao fazer upload do documento:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao fazer upload do documento');
   }
 };
 
 /**
  * Realiza o upload de um documento sem associá-lo a uma conversa específica.
- * O documento será associado posteriormente quando uma conversa for criada.
  * 
  * @param {File} file - Arquivo a ser enviado
  * @returns {Promise<Object>} - Resposta com dados do documento
@@ -137,40 +102,28 @@ export const uploadDocumentWithoutConversation = async (file) => {
       throw new Error('Arquivo não fornecido');
     }
     
-    // Criar FormData para o arquivo
     const formData = new FormData();
     formData.append('file', file);
     
-    // Upload sem conversationId
-    const response = await api.post('/documents/upload-temp', formData, {
+    const response = await api.post(API_ENDPOINTS.DOCUMENTS.TEMP_UPLOAD, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
     
-    // Normalizar a resposta
-    const responseData = response.data;
-    let documentId = null;
+    const adaptedResponse = adaptApiResponse(response);
     
-    // Extrair ID do documento de forma robusta
-    if (responseData?.documentId) {
-      documentId = responseData.documentId;
-    } else if (responseData?.document_id) {
-      documentId = responseData.document_id;
-    } else if (responseData?.data?.documentId) {
-      documentId = responseData.data.documentId;
-    } else if (responseData?.data?.document_id) {
-      documentId = responseData.data.document_id;
-    }
+    // Extrair ID do documento
+    const documentId = extractDocumentId(adaptedResponse);
     
     return {
-      ...responseData,
+      ...adaptedResponse,
       documentId,
-      status: responseData.status || 'success'
+      status: adaptedResponse.status || 'success'
     };
   } catch (error) {
     console.error('Erro ao fazer upload temporário:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao fazer upload temporário do documento');
   }
 };
 
@@ -191,14 +144,14 @@ export const associateDocumentWithConversation = async (documentId, conversation
       throw new Error('ID da conversa não fornecido');
     }
     
-    const response = await api.post(`/documents/${documentId}/associate`, {
+    const response = await api.post(API_ENDPOINTS.DOCUMENTS.ASSOCIATE(documentId), {
       conversationId
     });
     
-    return response.data;
+    return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao associar documento à conversa:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao associar documento à conversa');
   }
 };
 
@@ -209,19 +162,15 @@ export const associateDocumentWithConversation = async (documentId, conversation
  */
 export const getTemporaryDocuments = async () => {
   try {
-    const response = await api.get('/documents/temporary');
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.TEMPORARY);
+    const adaptedResponse = adaptApiResponse(response);
     
-    // Normalizar a resposta
     let documents = [];
     
-    if (Array.isArray(response.data)) {
-      documents = response.data;
-    } else if (response.data?.documents) {
-      documents = response.data.documents;
-    } else if (response.data?.data?.documents) {
-      documents = response.data.data.documents;
-    } else if (Array.isArray(response.data?.data)) {
-      documents = response.data.data;
+    if (adaptedResponse.data?.documents) {
+      documents = adaptedResponse.data.documents;
+    } else if (Array.isArray(adaptedResponse.data)) {
+      documents = adaptedResponse.data;
     }
     
     return {
@@ -232,7 +181,7 @@ export const getTemporaryDocuments = async () => {
     };
   } catch (error) {
     console.error('Erro ao obter documentos temporários:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao obter documentos temporários');
   }
 };
 
@@ -248,30 +197,27 @@ export const getConversationDocuments = async (conversationId) => {
       return { status: 'error', message: 'ID da conversa não fornecido' };
     }
     
-    const response = await api.get(`/documents/conversation/${conversationId}`);
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.BY_CONVERSATION(conversationId));
+    const adaptedResponse = adaptApiResponse(response);
     
-    // Normalizar a resposta
     let documents = [];
     
-    if (Array.isArray(response.data)) {
-      documents = response.data;
-    } else if (response.data?.documents) {
-      documents = response.data.documents;
-    } else if (response.data?.data?.documents) {
-      documents = response.data.data.documents;
-    } else if (Array.isArray(response.data?.data)) {
-      documents = response.data.data;
+    if (adaptedResponse.data?.documents) {
+      documents = adaptedResponse.data.documents;
+    } else if (Array.isArray(adaptedResponse.data)) {
+      documents = adaptedResponse.data;
     }
     
     return {
       status: 'success',
       data: {
-        documents
+        documents,
+        count: documents.length
       }
     };
   } catch (error) {
     console.error('Erro ao obter documentos da conversa:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao obter documentos da conversa');
   }
 };
 
@@ -287,11 +233,11 @@ export const getDocumentContent = async (documentId) => {
       return { status: 'error', message: 'ID do documento não fornecido' };
     }
     
-    const response = await api.get(`/documents/${documentId}/content`);
-    return response.data;
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.CONTENT(documentId));
+    return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao obter conteúdo do documento:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao obter conteúdo do documento');
   }
 };
 
@@ -314,86 +260,38 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
     return new Promise(async (resolve, reject) => {
       try {
         // Verificar status do documento
-        const response = await api.get(`/documents/${documentId}/status`);
-        console.log(`Resposta de status (tentativa ${attempts+1}):`, response.data);
+        const response = await api.get(API_ENDPOINTS.DOCUMENTS.STATUS(documentId));
+        const adaptedResponse = adaptApiResponse(response);
         
-        // Normalizar a extração do status para lidar com diferentes formatos de resposta
-        let status = null;
-        let progress = 0;
-        let documentData = null;
+        // Extrair status e progresso
+        const status = extractDocumentStatus(adaptedResponse);
+        const progress = adaptedResponse.data?.processing_progress || 0;
         
-        // Extrair status de forma robusta - MELHORADO
-        if (response.data?.status) {
-          status = response.data.status;
-        } else if (response.data?.data?.status) {
-          status = response.data.data.status;
-        } else if (response.data?.document?.status) {
-          status = response.data.document.status;
-        } else if (response.data?.data?.data?.status) {
-          status = response.data.data.data.status;
-        }
-        
-        // Verificação adicional para novos formatos de resposta
-        if (!status && response.data) {
-          // Procurar campo 'status' em qualquer nível do objeto de resposta
-          const searchStatus = (obj) => {
-            if (!obj || typeof obj !== 'object') return null;
-            if (obj.status) return obj.status;
-            for (const key in obj) {
-              if (typeof obj[key] === 'object') {
-                const foundStatus = searchStatus(obj[key]);
-                if (foundStatus) return foundStatus;
-              }
-            }
-            return null;
-          };
-          
-          status = searchStatus(response.data);
-        }
-        
-        // Extrair progresso de forma robusta
-        if (response.data?.progress !== undefined) {
-          progress = response.data.progress;
-        } else if (response.data?.data?.processing_progress !== undefined) {
-          progress = response.data.data.processing_progress;
-        } else if (response.data?.data?.progress !== undefined) {
-          progress = response.data.data.progress;
-        }
-        
-        // Extrair dados do documento
-        if (response.data?.document) {
-          documentData = response.data.document;
-        } else if (response.data?.data) {
-          documentData = response.data.data;
-        }
-        
-        console.log(`Status extraído: ${status}, Progresso: ${progress}`);
-        
-        // CORREÇÃO: Lista abrangente de status "concluídos" e "erro"
+        // Listas de status completados e com erro
         const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
         const errorStatuses = ['error', 'failed', 'erro', 'falha', 'unavailable'];
         
-        // CORREÇÃO: Converter para minúsculas antes de verificar
+        // Normalizar status para comparação
         const statusLower = status ? status.toLowerCase() : '';
         
         if (completedStatuses.includes(statusLower)) {
           // Processamento concluído com sucesso
           resolve({ 
             success: true, 
-            document: documentData,
+            document: adaptedResponse.data,
             progress: 100,
             status: 'completed'
           });
         } else if (errorStatuses.includes(statusLower)) {
-          // Extrair mensagem de erro de forma robusta
+          // Extrair mensagem de erro
           let errorMessage = 'Erro ao processar documento';
           
-          if (response.data?.message) {
-            errorMessage = response.data.message;
-          } else if (response.data?.data?.processing_error) {
-            errorMessage = response.data.data.processing_error;
-          } else if (response.data?.error) {
-            errorMessage = response.data.error;
+          if (adaptedResponse.message) {
+            errorMessage = adaptedResponse.message;
+          } else if (adaptedResponse.data?.processing_error) {
+            errorMessage = adaptedResponse.data.processing_error;
+          } else if (adaptedResponse.error) {
+            errorMessage = adaptedResponse.error;
           }
           
           // Erro no processamento
@@ -404,7 +302,6 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
           });
         } else if (attempts >= maxAttempts) {
           // Limite de tentativas atingido
-          console.error(`Timeout após ${maxAttempts} tentativas. Último status: ${status}`);
           reject({ 
             success: false, 
             error: 'Tempo limite excedido para processamento do documento',
@@ -414,21 +311,9 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
           // Continuar esperando
           attempts++;
           
-          // CORREÇÃO: Adicionar verificação para documentos pequenos processados rapidamente
-          // Se o progresso já estiver acima de 80% e status for 'processing', verificar novamente com menor intervalo
+          // Ajustar intervalo para documentos pequenos processados rapidamente
           const adjustedInterval = (progress > 80 && statusLower === 'processing') ? 
             Math.max(500, interval / 2) : interval;
-          
-          // Emitir evento de progresso se estiver definido
-          if (window.dispatchEvent && typeof CustomEvent === 'function') {
-            window.dispatchEvent(new CustomEvent('document-processing-progress', {
-              detail: {
-                documentId,
-                progress,
-                status
-              }
-            }));
-          }
           
           setTimeout(() => {
             pollStatus().then(resolve).catch(reject);
@@ -436,6 +321,7 @@ export const pollDocumentStatus = async (documentId, maxAttempts = 60, interval 
         }
       } catch (error) {
         console.error(`Erro ao verificar status (tentativa ${attempts+1}):`, error);
+        
         // Erro ao verificar status, mas continuamos tentando
         attempts++;
         if (attempts >= maxAttempts) {
@@ -472,11 +358,11 @@ export const deleteDocument = async (documentId) => {
       throw new Error('ID do documento não fornecido');
     }
     
-    const response = await api.delete(`/documents/${documentId}`);
-    return response.data;
+    const response = await api.delete(API_ENDPOINTS.DOCUMENTS.BASE + `/${documentId}`);
+    return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao excluir documento:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao excluir documento');
   }
 };
 
@@ -494,31 +380,11 @@ export const searchDocuments = async (query, conversationId = null) => {
       params.conversationId = conversationId;
     }
     
-    const response = await api.get('/documents/search', { params });
-    return response.data;
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.SEARCH, { params });
+    return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao buscar documentos:', error);
-    throw error;
-  }
-};
-
-/**
- * Obtém metadados de um documento
- * 
- * @param {string} documentId - ID do documento
- * @returns {Promise<Object>} - Resposta com metadados
- */
-export const getDocumentMetadata = async (documentId) => {
-  try {
-    if (!documentId) {
-      throw new Error('ID do documento não fornecido');
-    }
-    
-    const response = await api.get(`/documents/${documentId}/metadata`);
-    return response.data;
-  } catch (error) {
-    console.error('Erro ao obter metadados do documento:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao buscar documentos');
   }
 };
 
@@ -534,135 +400,12 @@ export const getDocumentStatus = async (documentId) => {
       throw new Error('ID do documento não fornecido');
     }
     
-    const response = await api.get(`/documents/${documentId}/status`);
-    return response.data;
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.STATUS(documentId));
+    return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao obter status do documento:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao obter status do documento');
   }
-};
-
-/**
- * Extrai texto de uma página específica de um documento
- * 
- * @param {string} documentId - ID do documento
- * @param {number} pageNumber - Número da página
- * @returns {Promise<Object>} - Resposta com texto extraído
- */
-export const getPageText = async (documentId, pageNumber) => {
-  try {
-    if (!documentId) {
-      throw new Error('ID do documento não fornecido');
-    }
-    
-    if (!pageNumber && pageNumber !== 0) {
-      throw new Error('Número da página não fornecido');
-    }
-    
-    const response = await api.get(`/documents/${documentId}/pages/${pageNumber}/text`);
-    return response.data;
-  } catch (error) {
-    console.error('Erro ao obter texto da página:', error);
-    throw error;
-  }
-};
-
-/**
- * Obtém uma visualização em miniatura de uma página do documento
- * 
- * @param {string} documentId - ID do documento
- * @param {number} pageNumber - Número da página
- * @param {string} size - Tamanho da miniatura (small, medium, large)
- * @returns {Promise<Object>} - Resposta com URL da miniatura
- */
-export const getPageThumbnail = async (documentId, pageNumber, size = 'medium') => {
-  try {
-    if (!documentId) {
-      throw new Error('ID do documento não fornecido');
-    }
-    
-    if (!pageNumber && pageNumber !== 0) {
-      throw new Error('Número da página não fornecido');
-    }
-    
-    const response = await api.get(`/documents/${documentId}/pages/${pageNumber}/thumbnail`, {
-      params: { size }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Erro ao obter miniatura da página:', error);
-    throw error;
-  }
-};
-
-/**
- * Atualiza metadados de um documento
- * 
- * @param {string} documentId - ID do documento
- * @param {Object} metadata - Novos metadados
- * @returns {Promise<Object>} - Resposta com documento atualizado
- */
-export const updateDocumentMetadata = async (documentId, metadata) => {
-  try {
-    if (!documentId) {
-      throw new Error('ID do documento não fornecido');
-    }
-    
-    if (!metadata || Object.keys(metadata).length === 0) {
-      throw new Error('Metadados não fornecidos');
-    }
-    
-    const response = await api.patch(`/documents/${documentId}/metadata`, metadata);
-    return response.data;
-  } catch (error) {
-    console.error('Erro ao atualizar metadados do documento:', error);
-    throw error;
-  }
-};
-
-/**
- * Compartilha um documento com outro usuário
- * 
- * @param {string} documentId - ID do documento
- * @param {string} userId - ID do usuário para compartilhar
- * @param {string} permission - Nível de permissão (read, write, admin)
- * @returns {Promise<Object>} - Resposta com resultado do compartilhamento
- */
-export const shareDocument = async (documentId, userId, permission = 'read') => {
-  try {
-    if (!documentId) {
-      throw new Error('ID do documento não fornecido');
-    }
-    
-    if (!userId) {
-      throw new Error('ID do usuário não fornecido');
-    }
-    
-    const response = await api.post(`/documents/${documentId}/share`, {
-      user_id: userId,
-      permission
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Erro ao compartilhar documento:', error);
-    throw error;
-  }
-};
-
-// Manipulação de eventos de progresso de processamento
-export const subscribeToProcessingProgress = (documentId, callback) => {
-  const handler = (event) => {
-    if (event.detail.documentId === documentId) {
-      callback(event.detail);
-    }
-  };
-  
-  window.addEventListener('document-processing-progress', handler);
-  
-  // Retornar função para cancelar inscrição
-  return () => {
-    window.removeEventListener('document-processing-progress', handler);
-  };
 };
 
 /**
@@ -678,38 +421,32 @@ export const getUserDocuments = async (conversationId = null) => {
       params.conversationId = conversationId;
     }
     
-    const response = await api.get('/documents', { params });
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.BASE, { params });
+    const adaptedResponse = adaptApiResponse(response);
     
-    // Normalizar a resposta para um formato consistente
     let documents = [];
-    let status = 'success';
     
-    if (Array.isArray(response.data)) {
-      documents = response.data;
-    } else if (response.data?.documents) {
-      documents = response.data.documents;
-      status = response.data.status || status;
-    } else if (response.data?.data?.documents) {
-      documents = response.data.data.documents;
-      status = response.data.status || status;
-    } else if (Array.isArray(response.data?.data)) {
-      documents = response.data.data;
-      status = response.data.status || status;
+    if (adaptedResponse.data?.documents) {
+      documents = adaptedResponse.data.documents;
+    } else if (Array.isArray(adaptedResponse.data)) {
+      documents = adaptedResponse.data;
     }
     
     return {
-      status,
+      status: 'success',
       data: {
-        documents
+        documents,
+        count: documents.length
       }
     };
   } catch (error) {
     console.error('Erro ao obter documentos do usuário:', error);
-    throw error;
+    throw parseApiError(error, 'Falha ao obter documentos do usuário');
   }
 };
 
-const documentService = {
+// Exportar todas as funções
+export default {
   checkDocumentProcessorHealth,
   uploadDocument,
   uploadDocumentWithoutConversation,
@@ -720,14 +457,6 @@ const documentService = {
   pollDocumentStatus,
   deleteDocument,
   searchDocuments,
-  getDocumentMetadata,
   getDocumentStatus,
-  getPageText,
-  getPageThumbnail,
-  updateDocumentMetadata,
-  shareDocument,
-  subscribeToProcessingProgress,
   getUserDocuments
 };
-
-export default documentService;

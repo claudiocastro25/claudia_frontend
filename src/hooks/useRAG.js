@@ -1,9 +1,15 @@
 import { useState, useCallback, useEffect } from 'react';
-import ragService from '../services/ragService';
+import { useErrorHandler } from './useErrorHandler';
+import { 
+  searchRelevantChunks, 
+  formatChunksAsContext,
+  processAssistantMessage,
+  checkDocumentsStatus
+} from '../services/unifiedDataService';
 
 /**
  * Hook para gerenciamento de funcionalidades RAG
- * (Retrieval Augmented Generation)
+ * Refatorado para remover duplicação com useDocuments
  */
 const useRAG = (conversationId) => {
   const [relevantChunks, setRelevantChunks] = useState([]);
@@ -11,7 +17,8 @@ const useRAG = (conversationId) => {
   const [referenceInfo, setReferenceInfo] = useState([]);
   const [sourceDocuments, setSourceDocuments] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [error, setError] = useState(null);
+  
+  const { error, handleError, clearError } = useErrorHandler();
 
   // Limpar dados quando a conversa muda
   useEffect(() => {
@@ -23,21 +30,19 @@ const useRAG = (conversationId) => {
     }
   }, [conversationId]);
 
-  /**
-   * Busca chunks relevantes para uma consulta
-   */
+  // Buscar contexto relevante para uma consulta
   const searchRelevantContext = useCallback(async (query) => {
     if (!conversationId || !query) return null;
 
     setIsSearching(true);
-    setError(null);
+    clearError();
 
     try {
-      const chunks = await ragService.searchRelevantChunks(query, conversationId);
+      const chunks = await searchRelevantChunks(query, conversationId);
       setRelevantChunks(chunks);
 
       // Formatar chunks como contexto
-      const context = ragService.formatChunksAsContext(chunks);
+      const context = formatChunksAsContext(chunks);
       setDocumentContext(context);
 
       // Extrair informações de referência para uso posterior
@@ -65,53 +70,40 @@ const useRAG = (conversationId) => {
       setIsSearching(false);
       return { context, sourceInfo: referenceInfo };
     } catch (err) {
-      console.error('Erro na busca RAG:', err);
-      setError(err.message || 'Erro ao buscar contexto relevante');
+      handleError(err, 'Erro na busca RAG');
       setIsSearching(false);
       return null;
     }
-  }, [conversationId]);
+  }, [conversationId, handleError, clearError]);
 
-  /**
-   * Processa uma mensagem do assistente para detectar referências
-   */
+  // Processar resposta do assistente para detectar referências
   const processAssistantResponse = useCallback((messageContent) => {
     if (!messageContent) return { hasReferences: false };
 
     try {
-      const result = ragService.processAssistantMessage(messageContent);
+      const result = processAssistantMessage(messageContent);
       return {
-        hasReferences: result.hasDocumentReferences,
-        documentReferences: result.documentReferences,
+        ...result,
         relevantChunks,
         sourceDocuments
       };
     } catch (err) {
-      console.error('Erro ao processar resposta do assistente:', err);
+      handleError(err, 'Erro ao processar resposta do assistente');
       return { hasReferences: false };
     }
-  }, [relevantChunks, sourceDocuments]);
+  }, [relevantChunks, sourceDocuments, handleError]);
 
-  /**
-   * Verifica o status dos documentos na conversa
-   */
-  const checkDocumentsStatus = useCallback(async () => {
+  // Verificar status dos documentos na conversa
+  const checkDocumentsAvailability = useCallback(async () => {
     if (!conversationId) return { hasDocuments: false };
 
     try {
-      return await ragService.checkDocumentsStatus(conversationId);
+      return await checkDocumentsStatus(conversationId);
     } catch (err) {
-      console.error('Erro ao verificar status dos documentos:', err);
+      handleError(err, 'Erro ao verificar status dos documentos');
       return { hasDocuments: false, error: err.message };
     }
-  }, [conversationId]);
-
-  /**
-   * Obtém mensagens amigáveis para mostrar durante o processamento de documentos
-   */
-  const getProcessingMessage = useCallback((status, progress) => {
-    return ragService.getProcessingMessage(status, progress);
-  }, []);
+  }, [conversationId, handleError]);
 
   return {
     // Estado
@@ -125,8 +117,7 @@ const useRAG = (conversationId) => {
     // Métodos
     searchRelevantContext,
     processAssistantResponse,
-    checkDocumentsStatus,
-    getProcessingMessage
+    checkDocumentsStatus: checkDocumentsAvailability,
   };
 };
 

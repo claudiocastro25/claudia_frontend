@@ -1,271 +1,289 @@
-import React, { useState } from 'react';
-import { 
-  Box, 
-  IconButton, 
-  Tooltip, 
-  Menu, 
-  MenuItem, 
-  ListItemIcon, 
-  ListItemText,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
+import React from 'react';
+import {
+  Box,
   Button,
-  TextField,
-  CircularProgress
+  IconButton,
+  Tooltip,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Divider
 } from '@mui/material';
-import { 
-  Download as DownloadIcon,
-  Bookmark as BookmarkIcon,
-  BookmarkBorder as BookmarkBorderIcon,
-  Share as ShareIcon,
-  Image as ImageIcon,
-  TableChart as TableIcon,
-  Code as CodeIcon,
-  MoreVert as MoreIcon
-} from '@mui/icons-material';
-import { useVisualization } from '../../contexts/VisualizationContext';
+
+// Icons
+import ShareIcon from '@mui/icons-material/Share';
+import SaveIcon from '@mui/icons-material/Save';
+import DownloadIcon from '@mui/icons-material/Download';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import ImageIcon from '@mui/icons-material/Image';
+import CodeIcon from '@mui/icons-material/Code';
+import CloseIcon from '@mui/icons-material/Close';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
+import FormatQuoteIcon from '@mui/icons-material/FormatQuote';
+
+// Context
+import { useVisualizationContext } from '../../contexts/VisualizationContext';
 
 /**
- * Componente de ações para visualizações (exportar, favoritar, etc.)
+ * Componente que exibe ações para visualizações
+ * Permite exportar, compartilhar, salvar, etc.
  */
-const VisualizationActions = ({ visualization, conversationId, messageId }) => {
-  const [menuAnchorEl, setMenuAnchorEl] = useState(null);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState('png');
-  const [exportTitle, setExportTitle] = useState(visualization?.title || 'Visualização');
-  const [isExporting, setIsExporting] = useState(false);
+const VisualizationActions = ({
+  visualization,
+  onClose,
+  isFullScreen,
+  onToggleFullScreen,
+  variant = 'default',
+  showMainActions = true,
+  showMenuActions = true,
+  showCloseButton = true
+}) => {
+  const [anchorEl, setAnchorEl] = React.useState(null);
+  const open = Boolean(anchorEl);
   
-  const { 
-    toggleFavorite, 
-    isFavorite, 
-    exportVisualization, 
+  const {
     saveVisualization,
-    loading,
-    error
-  } = useVisualization();
-  
-  // Estado local para verificar se é favorito
-  const isFavorited = isFavorite(visualization?.id);
+    exportVisualization
+  } = useVisualizationContext();
   
   // Abrir menu
-  const handleMenuOpen = (event) => {
-    setMenuAnchorEl(event.currentTarget);
+  const handleOpenMenu = (event) => {
+    setAnchorEl(event.currentTarget);
   };
   
   // Fechar menu
-  const handleMenuClose = () => {
-    setMenuAnchorEl(null);
-  };
-  
-  // Abrir diálogo de exportação
-  const handleOpenExportDialog = () => {
-    setExportDialogOpen(true);
-    handleMenuClose();
-  };
-  
-  // Fechar diálogo de exportação
-  const handleCloseExportDialog = () => {
-    setExportDialogOpen(false);
-  };
-  
-  // Favoritar/desfavoritar
-  const handleToggleFavorite = () => {
-    toggleFavorite(visualization);
-    handleMenuClose();
-  };
-  
-  // Exportar visualização
-  const handleExport = async () => {
-    setIsExporting(true);
-    
-    try {
-      const result = await exportVisualization(visualization, exportFormat);
-      
-      // Processar o resultado de acordo com o formato
-      if (exportFormat === 'png' || exportFormat === 'svg') {
-        // Se for um blob, criar um link de download
-        if (result instanceof Blob) {
-          const url = URL.createObjectURL(result);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${exportTitle.replace(/\s+/g, '-').toLowerCase()}.${exportFormat}`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-        } else if (typeof result === 'string' && exportFormat === 'svg') {
-          // Para SVG como string
-          const blob = new Blob([result], { type: 'image/svg+xml' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${exportTitle.replace(/\s+/g, '-').toLowerCase()}.svg`;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-        }
-      } else if (exportFormat === 'csv' || exportFormat === 'json') {
-        // Para formatos de texto
-        const blob = new Blob([result], { 
-          type: exportFormat === 'csv' ? 'text/csv' : 'application/json' 
-        });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${exportTitle.replace(/\s+/g, '-').toLowerCase()}.${exportFormat}`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-      }
-      
-      setExportDialogOpen(false);
-    } catch (err) {
-      console.error('Erro ao exportar:', err);
-    } finally {
-      setIsExporting(false);
-    }
+  const handleCloseMenu = () => {
+    setAnchorEl(null);
   };
   
   // Salvar visualização
-  const handleSave = () => {
-    saveVisualization(visualization, conversationId, messageId);
-    handleMenuClose();
+  const handleSave = async () => {
+    try {
+      const result = await saveVisualization(visualization);
+      
+      if (result && result.success) {
+        // Poderia mostrar uma notificação de sucesso
+        console.log('Visualização salva com sucesso');
+      }
+    } catch (error) {
+      console.error('Erro ao salvar visualização', error);
+    }
+    
+    handleCloseMenu();
   };
   
-  // Ícones por tipo de exportação
-  const formatIcons = {
-    png: <ImageIcon fontSize="small" />,
-    svg: <ImageIcon fontSize="small" />,
-    csv: <TableIcon fontSize="small" />,
-    json: <CodeIcon fontSize="small" />
+  // Exportar visualização
+  const handleExport = async (format = 'png') => {
+    try {
+      const result = await exportVisualization(visualization, format);
+      
+      if (result && result.success) {
+        // Poderia mostrar uma notificação de sucesso
+        console.log(`Visualização exportada como ${format}`);
+      }
+    } catch (error) {
+      console.error(`Erro ao exportar como ${format}`, error);
+    }
+    
+    handleCloseMenu();
+  };
+  
+  // Copiar como imagem
+  const handleCopyAsImage = () => {
+    // Implementação dependente do tipo de visualização
+    console.log('Copiando como imagem...');
+    handleCloseMenu();
+  };
+  
+  // Copiar código
+  const handleCopyCode = () => {
+    if (visualization && visualization.code) {
+      navigator.clipboard.writeText(visualization.code)
+        .then(() => console.log('Código copiado para a área de transferência'))
+        .catch(err => console.error('Erro ao copiar código', err));
+    }
+    
+    handleCloseMenu();
+  };
+  
+  // Copiar como markdown
+  const handleCopyAsMarkdown = () => {
+    if (visualization && visualization.code) {
+      const markdown = `\`\`\`${visualization.language || 'js'}\n${visualization.code}\n\`\`\``;
+      
+      navigator.clipboard.writeText(markdown)
+        .then(() => console.log('Markdown copiado para a área de transferência'))
+        .catch(err => console.error('Erro ao copiar markdown', err));
+    }
+    
+    handleCloseMenu();
+  };
+  
+  // Citar visualização
+  const handleCiteVisualization = () => {
+    // Geraria uma citação para a visualização
+    console.log('Gerando citação...');
+    handleCloseMenu();
+  };
+  
+  // Compartilhar visualização
+  const handleShare = () => {
+    // Implementação real dependeria da integração com serviços de compartilhamento
+    console.log('Compartilhando visualização...');
+    handleCloseMenu();
+  };
+
+  // Renderizar botões principais
+  const renderMainActions = () => {
+    if (!showMainActions) return null;
+    
+    return (
+      <>
+        {/* Botão de salvar */}
+        <Tooltip title="Salvar visualização">
+          <IconButton
+            onClick={handleSave}
+            size={variant === 'compact' ? 'small' : 'medium'}
+          >
+            <SaveIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+          </IconButton>
+        </Tooltip>
+        
+        {/* Botão de compartilhar */}
+        <Tooltip title="Compartilhar">
+          <IconButton 
+            onClick={handleShare}
+            size={variant === 'compact' ? 'small' : 'medium'}
+          >
+            <ShareIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+          </IconButton>
+        </Tooltip>
+        
+        {/* Botão de exportar */}
+        <Tooltip title="Exportar como PNG">
+          <IconButton
+            onClick={() => handleExport('png')}
+            size={variant === 'compact' ? 'small' : 'medium'}
+          >
+            <DownloadIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+          </IconButton>
+        </Tooltip>
+        
+        {/* Botão de tela cheia se houver callback */}
+        {onToggleFullScreen && (
+          <Tooltip title={isFullScreen ? "Sair da tela cheia" : "Tela cheia"}>
+            <IconButton
+              onClick={onToggleFullScreen}
+              size={variant === 'compact' ? 'small' : 'medium'}
+            >
+              {isFullScreen ? (
+                <FullscreenExitIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+              ) : (
+                <FullscreenIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+              )}
+            </IconButton>
+          </Tooltip>
+        )}
+      </>
+    );
+  };
+  
+  // Renderizar botão de menu
+  const renderMenuButton = () => {
+    if (!showMenuActions) return null;
+    
+    return (
+      <>
+        <Tooltip title="Mais opções">
+          <IconButton
+            onClick={handleOpenMenu}
+            size={variant === 'compact' ? 'small' : 'medium'}
+            aria-controls={open ? 'visualization-menu' : undefined}
+            aria-haspopup="true"
+            aria-expanded={open ? 'true' : undefined}
+          >
+            <MoreVertIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+          </IconButton>
+        </Tooltip>
+        
+        <Menu
+          id="visualization-menu"
+          anchorEl={anchorEl}
+          open={open}
+          onClose={handleCloseMenu}
+          MenuListProps={{
+            'aria-labelledby': 'basic-button',
+          }}
+        >
+          <MenuItem onClick={() => handleExport('svg')}>
+            <ListItemIcon>
+              <ImageIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Exportar como SVG</ListItemText>
+          </MenuItem>
+          
+          <MenuItem onClick={handleCopyAsImage}>
+            <ListItemIcon>
+              <ContentCopyIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Copiar como imagem</ListItemText>
+          </MenuItem>
+          
+          <Divider />
+          
+          <MenuItem onClick={handleCopyCode}>
+            <ListItemIcon>
+              <CodeIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Copiar código</ListItemText>
+          </MenuItem>
+          
+          <MenuItem onClick={handleCopyAsMarkdown}>
+            <ListItemIcon>
+              <FormatQuoteIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Copiar como markdown</ListItemText>
+          </MenuItem>
+          
+          <Divider />
+          
+          <MenuItem onClick={handleCiteVisualization}>
+            <ListItemIcon>
+              <FormatQuoteIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Gerar citação</ListItemText>
+          </MenuItem>
+        </Menu>
+      </>
+    );
+  };
+  
+  // Renderizar botão de fechar
+  const renderCloseButton = () => {
+    if (!showCloseButton || !onClose) return null;
+    
+    return (
+      <Tooltip title="Fechar">
+        <IconButton
+          onClick={onClose}
+          size={variant === 'compact' ? 'small' : 'medium'}
+          sx={{ ml: 1 }}
+        >
+          <CloseIcon fontSize={variant === 'compact' ? 'small' : 'medium'} />
+        </IconButton>
+      </Tooltip>
+    );
   };
   
   return (
-    <>
-      {/* Botão principal de ações */}
-      <Box sx={{ display: 'flex', gap: 1 }}>
-        <Tooltip title={isFavorited ? "Remover dos favoritos" : "Adicionar aos favoritos"}>
-          <IconButton
-            size="small"
-            onClick={handleToggleFavorite}
-            color={isFavorited ? "warning" : "default"}
-          >
-            {isFavorited ? <BookmarkIcon /> : <BookmarkBorderIcon />}
-          </IconButton>
-        </Tooltip>
-        
-        <Tooltip title="Exportar">
-          <IconButton
-            size="small"
-            onClick={handleOpenExportDialog}
-          >
-            <DownloadIcon />
-          </IconButton>
-        </Tooltip>
-        
-        <Tooltip title="Mais opções">
-          <IconButton
-            size="small"
-            onClick={handleMenuOpen}
-          >
-            <MoreIcon />
-          </IconButton>
-        </Tooltip>
-      </Box>
-      
-      {/* Menu de opções */}
-      <Menu
-        anchorEl={menuAnchorEl}
-        open={Boolean(menuAnchorEl)}
-        onClose={handleMenuClose}
-        anchorOrigin={{
-          vertical: 'bottom',
-          horizontal: 'right',
-        }}
-        transformOrigin={{
-          vertical: 'top',
-          horizontal: 'right',
-        }}
-      >
-        <MenuItem onClick={handleToggleFavorite}>
-          <ListItemIcon>
-            {isFavorited ? <BookmarkIcon color="warning" /> : <BookmarkBorderIcon />}
-          </ListItemIcon>
-          <ListItemText>
-            {isFavorited ? "Remover dos favoritos" : "Adicionar aos favoritos"}
-          </ListItemText>
-        </MenuItem>
-        
-        <MenuItem onClick={handleOpenExportDialog}>
-          <ListItemIcon>
-            <DownloadIcon />
-          </ListItemIcon>
-          <ListItemText>Exportar</ListItemText>
-        </MenuItem>
-        
-        <MenuItem onClick={handleSave}>
-          <ListItemIcon>
-            <ShareIcon />
-          </ListItemIcon>
-          <ListItemText>Salvar visualização</ListItemText>
-        </MenuItem>
-      </Menu>
-      
-      {/* Diálogo de exportação */}
-      <Dialog
-        open={exportDialogOpen}
-        onClose={handleCloseExportDialog}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Exportar Visualização</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Título"
-            type="text"
-            fullWidth
-            value={exportTitle}
-            onChange={(e) => setExportTitle(e.target.value)}
-            variant="outlined"
-            sx={{ mb: 2 }}
-          />
-          
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {['png', 'svg', 'csv', 'json'].map((format) => (
-              <Button
-                key={format}
-                variant={exportFormat === format ? "contained" : "outlined"}
-                startIcon={formatIcons[format]}
-                onClick={() => setExportFormat(format)}
-                fullWidth
-              >
-                {format.toUpperCase()}
-              </Button>
-            ))}
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseExportDialog} color="inherit">
-            Cancelar
-          </Button>
-          <Button 
-            onClick={handleExport} 
-            variant="contained" 
-            color="primary"
-            disabled={isExporting || loading}
-            startIcon={isExporting ? <CircularProgress size={18} /> : null}
-          >
-            {isExporting ? 'Exportando...' : 'Exportar'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </>
+    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+      {renderMainActions()}
+      {renderMenuButton()}
+      {renderCloseButton()}
+    </Box>
   );
 };
 

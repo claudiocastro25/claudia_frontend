@@ -1,50 +1,37 @@
 import { useState, useCallback, useEffect } from 'react';
-import documentService from '../services/documentService';
+import { useErrorHandler } from './useErrorHandler';
+import { useDocumentProcessor } from './useDocumentProcessor';
+import { API_ENDPOINTS } from '../constants/apiEndpoints';
+import { isCompleted } from '../constants/documentStatus';
+import { 
+  getUserDocuments, 
+  getDocumentContent,
+  deleteDocument,
+  associateDocumentWithConversation
+} from '../services/documentService';
 
 /**
  * Hook para gerenciamento de documentos
+ * Refatorado para remover duplicação com useRAG e usar o DocumentProcessor
  */
 const useDocuments = (conversationId) => {
   const [documents, setDocuments] = useState([]);
   const [activeDocument, setActiveDocument] = useState(null);
   const [documentContent, setDocumentContent] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState({
-    active: false,
-    documentId: null,
-    filename: null,
-    progress: 0,
-    error: null
-  });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [processorStatus, setProcessorStatus] = useState({
-    available: false,
-    checked: false,
-    message: 'Verificando status do processador...'
-  });
+  
+  const { error, handleError, clearError } = useErrorHandler();
+  const { 
+    processorStatus,
+    uploadStatus, 
+    processDocument,
+    checkProcessorHealth
+  } = useDocumentProcessor(conversationId);
 
-  // Verificar status do processador de documentos
+  // Verificar status do processador ao inicializar
   useEffect(() => {
-    const checkProcessor = async () => {
-      try {
-        const health = await documentService.checkDocumentProcessorHealth();
-        setProcessorStatus({
-          available: health.available === true, // Corrigido para usar o campo 'available' diretamente
-          checked: true,
-          message: health.message || 'Serviço de processamento disponível'
-        });
-      } catch (err) {
-        console.error('Erro ao verificar status do processador:', err);
-        setProcessorStatus({
-          available: false,
-          checked: true,
-          message: 'Serviço de processamento indisponível'
-        });
-      }
-    };
-    
-    checkProcessor();
-  }, []);
+    checkProcessorHealth();
+  }, [checkProcessorHealth]);
 
   // Carregar documentos quando a conversa muda
   useEffect(() => {
@@ -55,118 +42,47 @@ const useDocuments = (conversationId) => {
     }
   }, [conversationId]);
 
-  /**
-   * Carrega documentos associados à conversa
-   */
+  // Carregar documentos da conversa atual
   const loadDocuments = useCallback(async () => {
     if (!conversationId) return;
     
     setLoading(true);
-    setError(null);
+    clearError();
     
     try {
-      const response = await documentService.getUserDocuments(conversationId);
+      const response = await getUserDocuments(conversationId);
+      
       if (response.status === 'success' && response.data) {
         setDocuments(response.data.documents || []);
       }
-      setLoading(false);
-    } catch (err) {
-      console.error('Erro ao carregar documentos:', err);
-      setError('Erro ao carregar documentos');
+    } catch (error) {
+      handleError(error, 'Erro ao carregar documentos');
+    } finally {
       setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, handleError, clearError]);
 
-  /**
-   * Faz upload de um documento
-   */
+  // Upload de documento - Agora usa o processDocument centralizado
   const uploadDocument = useCallback(async (file) => {
-    if (!file || !conversationId || !processorStatus.available) {
-      setError('Não é possível fazer upload agora');
-      return;
+    if (!file || !conversationId) {
+      handleError(new Error('ID da conversa ou arquivo não fornecido'));
+      return { success: false };
     }
     
-    setUploadStatus({
-      active: true,
-      documentId: null,
-      filename: file.name,
-      progress: 10,
-      error: null
-    });
+    const result = await processDocument(file);
     
-    try {
-      // Upload do documento
-      const uploadResponse = await documentService.uploadDocument(file, conversationId);
-      
-      // Update progress
-      setUploadStatus(prev => ({
-        ...prev,
-        progress: 40
-      }));
-      
-      // Get document ID
-      const documentId = uploadResponse?.documentId || uploadResponse?.document_id;
-      if (!documentId) {
-        throw new Error('Não foi possível obter o ID do documento');
-      }
-      
-      // Update status with document ID
-      setUploadStatus(prev => ({
-        ...prev,
-        documentId,
-        progress: 60
-      }));
-      
-      // Poll for document status
-      const pollResult = await documentService.pollDocumentStatus(documentId);
-      
-      if (pollResult.success) {
-        // Upload complete
-        setUploadStatus(prev => ({
-          ...prev,
-          active: false,
-          progress: 100
-        }));
-        
-        // Reload documents
-        await loadDocuments();
-        
-        // Return success
-        return {
-          success: true,
-          documentId,
-          filename: file.name
-        };
-      } else {
-        // Error in processing
-        throw new Error(pollResult.error || 'Erro durante o processamento do documento');
-      }
-    } catch (err) {
-      console.error('Erro no upload do documento:', err);
-      
-      // Update state with error
-      setUploadStatus({
-        active: false,
-        documentId: null,
-        filename: file.name,
-        progress: 0,
-        error: err.message || 'Erro desconhecido'
-      });
-      
-      setError(`Erro ao processar "${file.name}": ${err.message || 'Erro desconhecido'}`);
-      return {
-        success: false,
-        error: err.message
-      };
+    if (result.success) {
+      // Recarregar documentos após um upload bem-sucedido
+      await loadDocuments();
     }
-  }, [conversationId, processorStatus.available, loadDocuments]);
+    
+    return result;
+  }, [conversationId, processDocument, loadDocuments, handleError]);
 
-  /**
-   * Visualiza um documento
-   */
+  // Visualizar um documento
   const viewDocument = useCallback(async (document) => {
     if (!document || !document.document_id) {
-      setError('Documento inválido');
+      handleError(new Error('Documento inválido'));
       return;
     }
     
@@ -175,33 +91,31 @@ const useDocuments = (conversationId) => {
     setLoading(true);
     
     try {
-      const response = await documentService.getDocumentContent(document.document_id);
+      const response = await getDocumentContent(document.document_id);
+      
       if (response.status === 'success' && response.data) {
         setDocumentContent(response.data);
       }
-      setLoading(false);
-    } catch (err) {
-      console.error('Erro ao obter conteúdo do documento:', err);
-      setError('Erro ao obter conteúdo do documento');
+    } catch (error) {
+      handleError(error, 'Erro ao obter conteúdo do documento');
+    } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleError]);
 
-  /**
-   * Exclui um documento
-   */
-  const deleteDocument = useCallback(async (documentId) => {
+  // Excluir um documento
+  const deleteDocumentById = useCallback(async (documentId) => {
     if (!documentId) {
-      setError('ID do documento não fornecido');
-      return;
+      handleError(new Error('ID do documento não fornecido'));
+      return { success: false };
     }
     
     setLoading(true);
     
     try {
-      await documentService.deleteDocument(documentId);
+      await deleteDocument(documentId);
       
-      // Atualiza lista removendo o documento excluído
+      // Atualizar lista removendo o documento excluído
       setDocuments(prev => prev.filter(doc => doc.document_id !== documentId));
       
       // Se for o documento ativo, limpar
@@ -210,155 +124,45 @@ const useDocuments = (conversationId) => {
         setDocumentContent(null);
       }
       
-      setLoading(false);
       return { success: true };
-    } catch (err) {
-      console.error('Erro ao excluir documento:', err);
-      setError('Erro ao excluir documento');
+    } catch (error) {
+      handleError(error, 'Erro ao excluir documento');
+      return { success: false, error: error.message };
+    } finally {
       setLoading(false);
-      return { success: false, error: err.message };
     }
-  }, [activeDocument]);
+  }, [handleError, activeDocument]);
 
-  /**
-   * Associa um documento a uma conversa
-   */
-  const associateDocumentWithConversation = useCallback(async (documentId, targetConversationId) => {
+  // Associar documento com conversa
+  const associateWithConversation = useCallback(async (documentId, targetConversationId) => {
     if (!documentId || !targetConversationId) {
-      setError('ID do documento e da conversa são obrigatórios');
-      return;
+      handleError(new Error('ID do documento e da conversa são obrigatórios'));
+      return { success: false };
     }
     
     setLoading(true);
     
     try {
-      await documentService.associateWithConversation(documentId, targetConversationId);
-      setLoading(false);
+      await associateDocumentWithConversation(documentId, targetConversationId);
+      
+      // Recarregar documentos se a associação for para a conversa atual
+      if (targetConversationId === conversationId) {
+        await loadDocuments();
+      }
+      
       return { success: true };
-    } catch (err) {
-      console.error('Erro ao associar documento:', err);
-      setError('Erro ao associar documento à conversa');
+    } catch (error) {
+      handleError(error, 'Erro ao associar documento à conversa');
+      return { success: false, error: error.message };
+    } finally {
       setLoading(false);
-      return { success: false, error: err.message };
     }
-  }, []);
+  }, [conversationId, loadDocuments, handleError]);
 
-  /**
-   * Procura documentos por conteúdo
-   */
-  const searchDocuments = useCallback(async (query) => {
-    if (!query || !conversationId) {
-      return [];
-    }
-    
-    setLoading(true);
-    
-    try {
-      const response = await documentService.searchDocuments(query, conversationId);
-      setLoading(false);
-      
-      if (response.status === 'success' && response.data) {
-        return response.data.results || [];
-      }
-      
-      return [];
-    } catch (err) {
-      console.error('Erro ao buscar documentos:', err);
-      setError('Erro ao buscar documentos');
-      setLoading(false);
-      return [];
-    }
-  }, [conversationId]);
-
-  /**
-   * Verifica o status de um documento específico
-   */
-  const checkDocumentStatus = useCallback(async (documentId) => {
-    if (!documentId) return null;
-    
-    try {
-      const response = await documentService.getDocumentStatus(documentId);
-      if (response.status === 'success' && response.data) {
-        return response.data;
-      }
-      return null;
-    } catch (err) {
-      console.error('Erro ao verificar status do documento:', err);
-      return null;
-    }
-  }, []);
-
-  /**
-   * Atualiza o status de um documento na lista
-   */
-  const updateDocumentStatus = useCallback((documentId, newStatus) => {
-    setDocuments(prevDocs => 
-      prevDocs.map(doc => 
-        doc.document_id === documentId 
-          ? { ...doc, status: newStatus } 
-          : doc
-      )
-    );
-  }, []);
-
-  /**
-   * Retorna mensagens amigáveis para o status de processamento
-   */
-  const getProcessingMessage = useCallback((status, progress) => {
-    const messages = {
-      uploading: [
-        "Preparando documento para upload...",
-        "Enviando documento...",
-        "Transferindo arquivo...",
-        "Quase lá! Finalizando envio..."
-      ],
-      processing: [
-        "Iniciando processamento...",
-        "Analisando estrutura do documento...",
-        "Extraindo conteúdo relevante...",
-        "Processando texto e dados..."
-      ],
-      analyzing: [
-        "Aplicando IA para compreender o documento...",
-        "Identificando conceitos importantes...",
-        "Conectando informações...",
-        "Preparando material para consulta..."
-      ],
-      finishing: [
-        "Finalizando o processamento...",
-        "Organizando os dados extraídos...",
-        "Pronto para responder suas perguntas!",
-        "Tudo certo! Documento pronto para uso."
-      ]
-    };
-    
-    // Determinar a fase atual
-    let phase = "uploading";
-    if (progress >= 25 && progress < 50) phase = "processing";
-    else if (progress >= 50 && progress < 75) phase = "analyzing";
-    else if (progress >= 75) phase = "finishing";
-    
-    // Escolher uma mensagem adequada da fase
-    const phaseMessages = messages[phase];
-    const index = Math.min(
-      Math.floor((progress % 25) / 6.25),
-      phaseMessages.length - 1
-    );
-    
-    return phaseMessages[index];
-  }, []);
-
-  /**
-   * Verifica se um documento pode ser visualizado
-   */
+  // Verificar se um documento pode ser visualizado
   const canViewDocument = useCallback((document) => {
     if (!document) return false;
-    
-    // Lista de status que são considerados completos
-    const completedStatuses = ['completed', 'complete', 'finalizado', 'concluído', 'concluido', 'success', 'disponível', 'available'];
-    
-    // Verificar se o status está na lista de status completados (case insensitive)
-    return document.status && completedStatuses.includes(document.status.toLowerCase());
+    return isCompleted(document.status);
   }, []);
 
   return {
@@ -375,13 +179,9 @@ const useDocuments = (conversationId) => {
     loadDocuments,
     uploadDocument,
     viewDocument,
-    deleteDocument,
-    associateDocumentWithConversation,
-    searchDocuments,
-    checkDocumentStatus,
-    updateDocumentStatus,
-    getProcessingMessage,
-    canViewDocument
+    deleteDocument: deleteDocumentById,
+    associateWithConversation,
+    canViewDocument,
   };
 };
 

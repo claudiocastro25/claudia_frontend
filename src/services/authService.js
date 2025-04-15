@@ -16,7 +16,8 @@ export const login = async (email, password) => {
       throw new Error('Falha de autenticação simulada');
     }
 
-    const response = await api.post('/auth/login', { email, password });
+    // Usando o caminho correto completo conforme definido no server.js
+    const response = await api.post('/api/auth/login', { email, password });
     
     if (response.data && response.data.data && response.data.data.token) {
       // Salvar o token no localStorage
@@ -50,7 +51,8 @@ export const login = async (email, password) => {
  */
 export const register = async (userData) => {
   try {
-    const response = await api.post('/auth/register', userData);
+    // Usando o caminho correto completo conforme definido no server.js
+    const response = await api.post('/api/auth/register', userData);
     
     if (response.data && response.data.data && response.data.data.token) {
       // Salvar o token no localStorage
