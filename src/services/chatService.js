@@ -2,6 +2,10 @@
 import api from './api';
 import { adaptApiResponse, parseApiError } from './serviceAdapter';
 
+// Sistema de cache para evitar chamadas repetidas
+const conversationCache = {};
+const CACHE_DURATION = 2000; // 2 segundos
+
 /**
  * Cria uma nova conversa
  * @param {string} title - Título da conversa
@@ -124,12 +128,26 @@ export const getConversation = async (conversationId) => {
     throw new Error('ID da conversa é obrigatório');
   }
   
+  // Verificar se há uma versão em cache válida
+  const cached = conversationCache[conversationId];
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    console.log(`Usando cache para conversa: ${conversationId}`);
+    return cached.data;
+  }
+  
   try {
     console.log(`Obtendo conversa: ${conversationId}`);
     const response = await api.get(`/api/chat/conversations/${conversationId}`);
     
     const result = adaptApiResponse(response);
     console.log(`Conversa obtida com sucesso, ${result.data?.messages?.length || 0} mensagens`);
+    
+    // Atualizar cache
+    conversationCache[conversationId] = {
+      data: result,
+      timestamp: Date.now()
+    };
+    
     return result;
   } catch (error) {
     console.error('Chat service error:', error);
@@ -192,6 +210,12 @@ export const sendMessage = async (conversationId, content, documentContext = nul
     const result = adaptApiResponse(response);
     console.log('Mensagem enviada com sucesso:', 
       result.data?.assistantMessage?.message_id || 'ID não encontrado');
+      
+    // Invalidar o cache da conversa após nova mensagem
+    if (conversationCache[conversationId]) {
+      delete conversationCache[conversationId];
+    }
+    
     return result;
   } catch (error) {
     console.error('Chat service error:', error);
@@ -222,6 +246,12 @@ export const deleteConversation = async (conversationId) => {
   
   try {
     const response = await api.delete(`/api/chat/conversations/${conversationId}`);
+    
+    // Remover da cache se existir
+    if (conversationCache[conversationId]) {
+      delete conversationCache[conversationId];
+    }
+    
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Chat service error:', error);
@@ -246,6 +276,12 @@ export const updateConversationTitle = async (conversationId, title) => {
   
   try {
     const response = await api.patch(`/api/chat/conversations/${conversationId}`, { title });
+    
+    // Invalidar o cache após atualização
+    if (conversationCache[conversationId]) {
+      delete conversationCache[conversationId];
+    }
+    
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Chat service error:', error);
@@ -287,6 +323,11 @@ export const getPromptSuggestions = async (category = 'general') => {
 export const checkConversationExists = async (conversationId) => {
   if (!conversationId) return false;
   
+  // Verificar cache primeiro
+  if (conversationCache[conversationId]) {
+    return true;
+  }
+  
   try {
     // Usa HEAD para verificar existência sem baixar dados
     await api.head(`/api/chat/conversations/${conversationId}`);
@@ -315,6 +356,23 @@ export const generateRagFeedback = (ragInfo) => {
   return `A resposta foi baseada em ${docCount} ${docCount === 1 ? 'documento' : 'documentos'}${docCount <= 3 ? `: ${docNames}` : ''}.`;
 };
 
+/**
+ * Limpa o cache de uma conversa específica ou de todas
+ * @param {string} conversationId - ID da conversa (opcional)
+ */
+export const clearConversationCache = (conversationId = null) => {
+  if (conversationId) {
+    if (conversationCache[conversationId]) {
+      delete conversationCache[conversationId];
+      console.log(`Cache limpo para conversa: ${conversationId}`);
+    }
+  } else {
+    // Limpar todo o cache
+    Object.keys(conversationCache).forEach(key => delete conversationCache[key]);
+    console.log('Cache de conversas completamente limpo');
+  }
+};
+
 export default {
   createConversation,
   getConversations,
@@ -324,5 +382,6 @@ export default {
   updateConversationTitle,
   getPromptSuggestions,
   checkConversationExists,
-  generateRagFeedback
+  generateRagFeedback,
+  clearConversationCache
 };

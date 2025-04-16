@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useErrorHandler } from '../hooks/useErrorHandler';
 import { 
   extractVisualizationFromMessage, 
@@ -10,31 +10,43 @@ const VisualizationContext = createContext({});
 
 /**
  * Provider para gerenciamento de visualizações
- * Melhorado para integração com DocumentContext
+ * Melhorado para integração com DocumentContext e evitar loops
  */
 export const VisualizationProvider = ({ children }) => {
   const [visualizations, setVisualizations] = useState([]);
   const [activeVisualization, setActiveVisualization] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState(null);
+  const [isLoadingVisualizations, setIsLoadingVisualizations] = useState(false);
+  
+  // Referência para rastrear a última conversa carregada
+  const lastLoadedConversationRef = useRef(null);
   
   const { error, handleError, clearError } = useErrorHandler();
 
   // Limpar dados quando a conversa muda
   useEffect(() => {
     if (activeConversationId) {
-      loadVisualizations();
+      // Verificar se já carregamos visualizações para esta conversa recentemente
+      if (lastLoadedConversationRef.current !== activeConversationId) {
+        loadVisualizations();
+        lastLoadedConversationRef.current = activeConversationId;
+      }
     } else {
       setVisualizations([]);
       setActiveVisualization(null);
       setIsDrawerOpen(false);
+      lastLoadedConversationRef.current = null;
     }
   }, [activeConversationId]);
 
   // Definir a conversa ativa
   const setConversation = useCallback((conversationId) => {
-    setActiveConversationId(conversationId);
-  }, []);
+    // Evitar redefinir a mesma conversa
+    if (conversationId !== activeConversationId) {
+      setActiveConversationId(conversationId);
+    }
+  }, [activeConversationId]);
 
   // Processar mensagem para visualizações
   const processMessageForVisualizations = useCallback((messageContent, messageId) => {
@@ -104,10 +116,11 @@ export const VisualizationProvider = ({ children }) => {
     }
   }, [activeVisualization, activeConversationId, handleError]);
 
-  // Carregar visualizações para a conversa atual
+  // Carregar visualizações para a conversa atual com proteção contra chamadas repetidas
   const loadVisualizations = useCallback(async () => {
-    if (!activeConversationId) return;
+    if (!activeConversationId || isLoadingVisualizations) return;
     
+    setIsLoadingVisualizations(true);
     clearError();
     
     try {
@@ -117,10 +130,15 @@ export const VisualizationProvider = ({ children }) => {
       // Em uma implementação real, haveria uma chamada de API aqui
       // const response = await api.get(`/visualizations?conversationId=${activeConversationId}`);
       // setVisualizations(response.data);
+      
+      // Simular um pequeno delay para evitar chamadas em rápida sucessão
+      await new Promise(resolve => setTimeout(resolve, 50));
     } catch (err) {
       handleError(err, 'Erro ao carregar visualizações');
+    } finally {
+      setIsLoadingVisualizations(false);
     }
-  }, [activeConversationId, clearError, handleError]);
+  }, [activeConversationId, clearError, handleError, isLoadingVisualizations]);
 
   // Exportar visualização
   const exportVisualization = useCallback((visualization, format = 'png') => {
@@ -147,6 +165,7 @@ export const VisualizationProvider = ({ children }) => {
     isDrawerOpen,
     activeConversationId,
     error,
+    isLoadingVisualizations,
     
     // Métodos
     setConversation,

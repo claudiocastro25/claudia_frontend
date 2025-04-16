@@ -1,12 +1,12 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 import { Box, Typography, CircularProgress, Fade } from '@mui/material';
 import MessageItem from './MessageItem';
 
 /**
  * Componente para exibir a lista de mensagens
- * Extraído do ChatContainer para melhorar modularidade
+ * Otimizado com memo para evitar renderizações desnecessárias
  */
-const MessageList = ({ 
+const MessageList = memo(({ 
   messages = [], 
   isTyping = false,
   documentReferences = {}, // Map de message_id -> documentos referenciados
@@ -16,11 +16,12 @@ const MessageList = ({
   const messagesEndRef = useRef(null);
   
   // Scroll para o final das mensagens quando novas são adicionadas
+  // Otimizado para depender apenas do número de mensagens
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (messagesEndRef.current && (messages.length > 0 || isTyping)) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isTyping]);
+  }, [messages.length, isTyping]);
   
   return (
     <Box 
@@ -117,6 +118,9 @@ const MessageList = ({
       )}
     </Box>
   );
-};
+});
+
+// Definir displayName para facilitar depuração
+MessageList.displayName = 'MessageList';
 
 export default MessageList;

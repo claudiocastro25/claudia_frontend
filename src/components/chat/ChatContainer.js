@@ -7,7 +7,8 @@ import {
   CircularProgress,
   useTheme,
   useMediaQuery,
-  ClickAwayListener
+  ClickAwayListener,
+  Typography
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
@@ -34,15 +35,25 @@ import { useErrorHandler } from '../../hooks/useErrorHandler';
 // Constantes
 import { DOCUMENT_STATUS } from '../../constants/documentStatus';
 
+// Cache global para evitar chamadas repetidas à API
+const CONVERSATION_CACHE = {};
+const VISUALIZATION_LOADED = {};
+let LOADING_CONVERSATION = false;
+let LOADING_VISUALIZATION = false;
+
 /**
  * Componente principal do container de chat
- * Refatorado para utilizar os contextos e dividido em subcomponentes
+ * Corrigido para eliminar loops e chamadas repetidas
  */
 const ChatContainer = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
   const { currentUser } = useAuth();
+  
+  // Refs para controle
+  const lastConversationId = useRef(null);
+  const requestCount = useRef(0);
   
   // Contextos
   const { 
@@ -95,6 +106,23 @@ const ChatContainer = () => {
     autoHideDuration: 6000
   });
   
+  // Função segura para carregar visualizações
+  const safelyLoadVisualizations = (conversationId) => {
+    // Não carregar se já carregado ou já está carregando
+    if (!conversationId || VISUALIZATION_LOADED[conversationId] || LOADING_VISUALIZATION) {
+      return;
+    }
+    
+    LOADING_VISUALIZATION = true;
+    VISUALIZATION_LOADED[conversationId] = true;
+    
+    // Usar setTimeout para evitar chamadas em rápida sucessão
+    setTimeout(() => {
+      loadVisualizations();
+      LOADING_VISUALIZATION = false;
+    }, 100);
+  };
+  
   // Função para lidar com clique fora da sidebar
   const handleClickAway = (event) => {
     if (sidebarExpanded && isMobile) {
@@ -138,36 +166,99 @@ const ChatContainer = () => {
     const loadMessages = async () => {
       if (!currentConversation) return;
       
+      const conversationId = currentConversation.conversation_id;
+      
+      // Evitar requisições repetidas para a mesma conversa
+      if (lastConversationId.current === conversationId) {
+        return;
+      }
+      
+      // Verificar se temos dados em cache
+      if (CONVERSATION_CACHE[conversationId]) {
+        console.log('Usando dados em cache para conversa:', conversationId);
+        
+        const cached = CONVERSATION_CACHE[conversationId];
+        setMessages(cached.messages || []);
+        setDocumentReferences(cached.references || {});
+        setIsNewChat(false);
+        
+        // Atualizar contextos
+        setConversation(conversationId);
+        setVisualizationConversation(conversationId);
+        
+        // Carregar documentos e visualizações de forma segura
+        loadConversationDocuments(conversationId);
+        safelyLoadVisualizations(conversationId);
+        
+        // Atualizar documentos ativos com atraso para evitar loops
+        setTimeout(() => {
+          try {
+            const docsResponse = getActiveConversationDocuments();
+            setActiveDocuments(docsResponse || []);
+          } catch (error) {
+            console.warn("Erro ao obter documentos ativos:", error);
+          }
+        }, 200);
+        
+        lastConversationId.current = conversationId;
+        return;
+      }
+      
+      // Evitar chamadas simultâneas
+      if (LOADING_CONVERSATION) {
+        return;
+      }
+      
+      LOADING_CONVERSATION = true;
+      lastConversationId.current = conversationId;
+      
       try {
         setIsLoading(true);
         clearError();
         
-        const response = await getConversation(currentConversation.conversation_id);
+        requestCount.current += 1;
+        console.log(`Carregando conversa (${requestCount.current}):`, conversationId);
+        
+        const response = await getConversation(conversationId);
         const messagesData = extractMessagesFromResponse(response) || [];
         
-        setMessages(messagesData);
-        setIsNewChat(false);
-        
-        // Carregar referências de documentos
+        // Armazenar em cache
         const newReferences = {};
         messagesData.forEach(message => {
           if (message.referenced_documents && message.referenced_documents.length > 0) {
             newReferences[message.message_id] = message.referenced_documents;
           }
         });
+        
+        CONVERSATION_CACHE[conversationId] = {
+          messages: messagesData,
+          references: newReferences,
+          timestamp: Date.now()
+        };
+        
+        setMessages(messagesData);
+        setIsNewChat(false);
         setDocumentReferences(newReferences);
         
-        // Atualizar contextos
-        setConversation(currentConversation.conversation_id);
-        setVisualizationConversation(currentConversation.conversation_id);
+        // Atualizar contextos com atraso para evitar loops
+        setTimeout(() => {
+          setConversation(conversationId);
+          setVisualizationConversation(conversationId);
+        }, 50);
         
-        // Carregar documentos e visualizações para esta conversa
-        loadConversationDocuments(currentConversation.conversation_id);
-        loadVisualizations();
-        
-        // Atualizar documentos ativos
-        const docsResponse = getActiveConversationDocuments();
-        setActiveDocuments(docsResponse || []);
+        // Carregar documentos e visualizações com atraso para evitar loops
+        setTimeout(() => {
+          loadConversationDocuments(conversationId);
+          safelyLoadVisualizations(conversationId);
+          
+          // Atualizar documentos ativos
+          try {
+            const docsResponse = getActiveConversationDocuments();
+            setActiveDocuments(docsResponse || []);
+          } catch (error) {
+            console.warn("Erro ao obter documentos ativos:", error);
+          }
+        }, 200);
         
       } catch (error) {
         handleError(error, 'Não foi possível carregar as mensagens desta conversa');
@@ -188,6 +279,7 @@ const ChatContainer = () => {
           setIsNewChat(true);
           setActiveDocuments([]);
           setDocumentReferences({});
+          lastConversationId.current = null;
           
           // Atualizar lista de conversas
           try {
@@ -207,6 +299,7 @@ const ChatContainer = () => {
         }
       } finally {
         setIsLoading(false);
+        LOADING_CONVERSATION = false;
       }
     };
     
@@ -238,6 +331,12 @@ const ChatContainer = () => {
   
   // Criar nova conversa com mensagem inicial
   const createNewConversationWithMessage = async (content) => {
+    // Evitar mensagens vazias
+    if (!content || content.trim() === '') return null;
+    
+    // Evitar enviar se já estiver processando
+    if (isTyping) return null;
+    
     try {
       setIsTyping(true);
       clearError();
@@ -256,6 +355,8 @@ const ChatContainer = () => {
         title = "Nova conversa";
       }
       
+      console.log("Criando nova conversa com mensagem:", content.substring(0, 20) + "...");
+      
       // Criar conversa
       const conversationResponse = await createConversation(title);
       
@@ -269,29 +370,36 @@ const ChatContainer = () => {
         throw new Error('Falha ao criar nova conversa - ID da conversa não encontrado');
       }
       
-      // Atualizar estado
-      setCurrentConversation(newConversation);
-      setConversations(prev => [newConversation, ...prev]);
-      setIsNewChat(false);
+      console.log("Nova conversa criada:", newConversation.conversation_id);
       
-      // Definir conversa nos contextos
-      setConversation(newConversation.conversation_id);
-      setVisualizationConversation(newConversation.conversation_id);
+      // IMPORTANTE: Atualizar estado de conversação primeiro
+      const conversationId = newConversation.conversation_id;
+      lastConversationId.current = conversationId;
       
       // Adicionar mensagem temporária do usuário
       const tempUserMessage = {
         message_id: `temp-${Date.now()}`,
-        conversation_id: newConversation.conversation_id,
+        conversation_id: conversationId,
         content,
         role: 'user',
         created_at: new Date().toISOString()
       };
       
+      // Garantir que as atualizações de estado ocorram na ordem correta
+      setCurrentConversation(newConversation);
+      setConversations(prev => [newConversation, ...prev]);
+      setIsNewChat(false);
       setMessages([tempUserMessage]);
+      
+      // Definir conversa nos contextos com atraso para evitar loops
+      setTimeout(() => {
+        setConversation(conversationId);
+        setVisualizationConversation(conversationId);
+      }, 50);
       
       // Enviar mensagem para o servidor
       const messageResponse = await sendMessage(
-        newConversation.conversation_id, 
+        conversationId, 
         content
       );
       
@@ -308,7 +416,7 @@ const ChatContainer = () => {
           userMessage = tempUserMessage;
           assistantMessage = {
             message_id: `fallback-${Date.now()}`,
-            conversation_id: newConversation.conversation_id,
+            conversation_id: conversationId,
             content: 'Não foi possível processar a resposta do assistente.',
             role: 'assistant',
             created_at: new Date().toISOString()
@@ -316,26 +424,39 @@ const ChatContainer = () => {
         }
         
         // Capturar referências de documentos
+        const newReferences = {};
         if (assistantMessage.referenced_documents && assistantMessage.referenced_documents.length > 0) {
-          setDocumentReferences(prev => ({
-            ...prev,
-            [assistantMessage.message_id]: assistantMessage.referenced_documents
-          }));
+          newReferences[assistantMessage.message_id] = assistantMessage.referenced_documents;
+          setDocumentReferences(newReferences);
         }
         
-        setMessages([userMessage, assistantMessage]);
+        const newMessages = [userMessage, assistantMessage];
+        setMessages(newMessages);
         
-        // Verificar visualizações na mensagem do assistente
-        if (typeof processMessageForVisualizations === 'function') {
-          const vizResult = processMessageForVisualizations(
-            assistantMessage.content,
-            assistantMessage.message_id
-          );
-          
-          if (vizResult && vizResult.hasVisualization) {
-            openVisualization(vizResult.visualization);
+        // Atualizar cache
+        CONVERSATION_CACHE[conversationId] = {
+          messages: newMessages,
+          references: newReferences,
+          timestamp: Date.now()
+        };
+        
+        // Verificar visualizações na mensagem do assistente com atraso para evitar loops
+        setTimeout(() => {
+          if (typeof processMessageForVisualizations === 'function') {
+            try {
+              const vizResult = processMessageForVisualizations(
+                assistantMessage.content,
+                assistantMessage.message_id
+              );
+              
+              if (vizResult && vizResult.hasVisualization) {
+                openVisualization(vizResult.visualization);
+              }
+            } catch (error) {
+              console.warn("Erro ao processar visualização:", error);
+            }
           }
-        }
+        }, 100);
       }
       
       return newConversation;
@@ -346,7 +467,7 @@ const ChatContainer = () => {
         message: 'Não foi possível criar a conversa ou enviar a mensagem',
         severity: 'error'
       });
-      throw error;
+      return null;
     } finally {
       setIsTyping(false);
     }
@@ -354,6 +475,10 @@ const ChatContainer = () => {
   
   // Enviar mensagem para conversa existente
   const sendMessageToConversation = async (conversationId, content) => {
+    // Validações
+    if (!conversationId || !content || content.trim() === '') return;
+    if (isTyping) return; // Evitar enviar durante digitação
+    
     try {
       setIsTyping(true);
       clearError();
@@ -398,25 +523,49 @@ const ChatContainer = () => {
             ...prev,
             [assistantMessage.message_id]: assistantMessage.referenced_documents
           }));
+          
+          // Atualizar referências no cache
+          if (CONVERSATION_CACHE[conversationId]) {
+            if (!CONVERSATION_CACHE[conversationId].references) {
+              CONVERSATION_CACHE[conversationId].references = {};
+            }
+            
+            CONVERSATION_CACHE[conversationId].references[assistantMessage.message_id] = 
+              assistantMessage.referenced_documents;
+          }
         }
         
         // Substituir mensagem temporária e adicionar resposta
-        setMessages(prev => {
+        const updatedMessages = prev => {
           const filtered = prev.filter(msg => msg.message_id !== tempUserMessage.message_id);
           return [...filtered, userMessage, assistantMessage];
-        });
+        };
+        
+        setMessages(updatedMessages);
+        
+        // Atualizar mensagens no cache
+        if (CONVERSATION_CACHE[conversationId]) {
+          CONVERSATION_CACHE[conversationId].messages = updatedMessages(CONVERSATION_CACHE[conversationId].messages || []);
+          CONVERSATION_CACHE[conversationId].timestamp = Date.now();
+        }
         
         // Verificar visualizações na mensagem do assistente
-        if (typeof processMessageForVisualizations === 'function') {
-          const vizResult = processMessageForVisualizations(
-            assistantMessage.content,
-            assistantMessage.message_id
-          );
-          
-          if (vizResult && vizResult.hasVisualization) {
-            openVisualization(vizResult.visualization);
+        setTimeout(() => {
+          if (typeof processMessageForVisualizations === 'function') {
+            try {
+              const vizResult = processMessageForVisualizations(
+                assistantMessage.content,
+                assistantMessage.message_id
+              );
+              
+              if (vizResult && vizResult.hasVisualization) {
+                openVisualization(vizResult.visualization);
+              }
+            } catch (error) {
+              console.warn("Erro ao processar visualização:", error);
+            }
           }
-        }
+        }, 100);
       }
     } catch (error) {
       handleError(error, 'Erro ao enviar mensagem');
@@ -437,6 +586,7 @@ const ChatContainer = () => {
         setIsNewChat(true);
         setActiveDocuments([]);
         setDocumentReferences({});
+        lastConversationId.current = null;
         
         // Atualizar lista de conversas
         try {
@@ -464,7 +614,7 @@ const ChatContainer = () => {
     if (!content || content.trim() === '') return;
     
     try {
-      if (isNewChat) {
+      if (isNewChat || !currentConversation) {
         // Criar nova conversa com mensagem inicial
         await createNewConversationWithMessage(content);
       } else if (currentConversation) {
@@ -483,8 +633,13 @@ const ChatContainer = () => {
     setIsNewChat(true);
     setActiveDocuments([]);
     setDocumentReferences({});
-    setConversation(null);
-    setVisualizationConversation(null);
+    lastConversationId.current = null;
+    
+    // Atualizar contextos com atraso para evitar loops
+    setTimeout(() => {
+      setConversation(null);
+      setVisualizationConversation(null);
+    }, 50);
     
     // Fechar sidebar no mobile
     if (isMobile && sidebarExpanded) {
@@ -494,7 +649,18 @@ const ChatContainer = () => {
   
   // Selecionar conversa existente
   const handleSelectConversation = (conversation) => {
+    // Evitar reselecionar a mesma conversa
+    if (currentConversation && 
+        currentConversation.conversation_id === conversation.conversation_id) {
+      // Apenas fechar sidebar no mobile
+      if (isMobile && sidebarExpanded) {
+        setSidebarExpanded(false);
+      }
+      return;
+    }
+    
     setCurrentConversation(conversation);
+    setIsNewChat(false);
     
     // Fechar sidebar no mobile
     if (isMobile && sidebarExpanded) {
@@ -506,7 +672,10 @@ const ChatContainer = () => {
   const handlePromptSelected = async (prompt) => {
     if (!prompt || prompt.trim() === '') return;
     
+    console.log("Prompt selecionado:", prompt);
+    
     try {
+      // Criar nova conversa com o prompt
       await createNewConversationWithMessage(prompt);
     } catch (error) {
       handleError(error, 'Erro ao processar exemplo');
@@ -592,145 +761,7 @@ const ChatContainer = () => {
       loadConversationDocuments(currentConversation.conversation_id);
     }
   };
-  
-  // Renderizar conteúdo principal
-  const renderContent = () => {
-    if (isNewChat) {
-      return (
-        <ClaudiaWelcomeScreen 
-          onStartChat={handleNewChat} 
-          onPromptSelected={handlePromptSelected} 
-          onUpload={() => fileInputRef.current?.click()}
-          processorAvailable={processorStatus.available}
-          sidebarWidth={280}
-          sidebarExpanded={sidebarExpanded}
-        />
-      );
-    }
 
-    return (
-      <Box 
-        sx={{ 
-          display: 'flex', 
-          flexDirection: 'column',
-          height: '100%',
-          position: 'relative',
-          overflow: 'hidden'
-        }}
-      >
-        {/* Cabeçalho da conversa */}
-        <ConversationHeader 
-          conversation={currentConversation}
-          documentsCount={activeDocuments.length}
-          messagesCount={messages.length}
-          onBack={() => setSidebarExpanded(true)}
-          onOpenDocuments={handleToggleDocumentPanel}
-        />
-        
-        {/* Área de chat */}
-        <Box 
-          sx={{ 
-            flex: 1,
-            display: 'flex',
-            overflow: 'hidden',
-            position: 'relative',
-            backgroundColor: theme.palette.mode === 'dark' 
-              ? alpha(theme.palette.background.paper, 0.5) 
-              : alpha(theme.palette.grey[50], 0.8)
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            if (e.dataTransfer.files.length > 0 && currentConversation) {
-              handleDocumentUpload(e.dataTransfer.files[0]);
-            }
-          }}
-        >
-          {/* Lista de mensagens */}
-          <Box 
-            sx={{ 
-              flex: 1,
-              overflow: 'auto',
-              height: '100%',
-              pr: isDocumentPanelOpen && !isSmall ? 2 : 0,
-              display: 'flex',
-              flexDirection: 'column'
-            }}
-          >
-            {/* Mostrar feedback de processamento se houver upload ativo */}
-            {uploadStatus.active && (
-              <Box sx={{ px: 2, pt: 2 }}>
-                <ProcessingFeedback 
-                  status={uploadStatus.status}
-                  progress={uploadStatus.progress}
-                  filename={uploadStatus.filename}
-                  error={uploadStatus.error}
-                />
-              </Box>
-            )}
-            
-            {/* Lista de mensagens */}
-            <MessageList 
-              messages={messages}
-              isTyping={isTyping}
-              documentReferences={documentReferences}
-              onViewDocument={handleViewDocument}
-              messagesEndRef={messagesEndRef}
-            />
-          </Box>
-          
-          {/* Painel de documentos */}
-          {(!isSmall || isDocumentPanelOpen) && (
-            <Box
-              sx={{
-                display: isDocumentPanelOpen ? 'block' : 'none',
-                width: isSmall ? '100%' : 350,
-                height: '100%',
-                position: isSmall ? 'absolute' : 'relative',
-                right: 0,
-                top: 0,
-                zIndex: 10,
-                bgcolor: 'background.paper',
-                borderLeft: !isSmall ? '1px solid' : 'none',
-                borderColor: 'divider',
-                boxShadow: isSmall ? 24 : 'none'
-              }}
-            >
-              <DocumentPanel 
-                ref={documentPanelRef}
-                conversationId={currentConversation?.conversation_id}
-                onClose={() => setIsDocumentPanelOpen(false)}
-                fullScreen={isSmall}
-                onUploadComplete={handleUploadComplete}
-              />
-            </Box>
-          )}
-        </Box>
-        
-        {/* Input de mensagem */}
-        <Box 
-          sx={{ 
-            p: 2, 
-            borderTop: '1px solid',
-            borderColor: 'divider',
-            bgcolor: theme.palette.background.paper,
-          }}
-        >
-          <MessageInput 
-            onSendMessage={handleSendMessage} 
-            onAttachFile={handleFileSelect}
-            disabled={isTyping || isLoading}
-            isTyping={isTyping}
-            processorAvailable={processorStatus.available}
-            conversationId={currentConversation?.conversation_id}
-            onViewDocument={handleViewDocument}
-            onOpenDocumentUploader={handleToggleDocumentPanel}
-          />
-        </Box>
-      </Box>
-    );
-  };
-  
   return (
     <ClickAwayListener onClickAway={handleClickAway}>
       <Box 
@@ -766,7 +797,7 @@ const ChatContainer = () => {
           alwaysShowExpandButton={true}
         />
         
-        {/* Conteúdo principal */}
+        {/* Conteúdo principal - SIMPLIFICADO */}
         <Box
           component="main"
           sx={{ 
@@ -778,7 +809,137 @@ const ChatContainer = () => {
             position: 'relative'
           }}
         >
-          {renderContent()}
+          {/* IMPORTANTE: Verificar diretamente o currentConversation */}
+          {!currentConversation ? (
+            <ClaudiaWelcomeScreen 
+              onStartChat={handleNewChat} 
+              onPromptSelected={handlePromptSelected} 
+              onUpload={() => fileInputRef.current?.click()}
+              processorAvailable={processorStatus.available}
+              sidebarWidth={280}
+              sidebarExpanded={sidebarExpanded}
+            />
+          ) : (
+            <Box 
+              sx={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                height: '100%',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
+              {/* Cabeçalho da conversa */}
+              <ConversationHeader 
+                conversation={currentConversation}
+                documentsCount={activeDocuments.length}
+                messagesCount={messages.length}
+                onBack={() => setSidebarExpanded(true)}
+                onOpenDocuments={handleToggleDocumentPanel}
+              />
+              
+              {/* Área de chat */}
+              <Box 
+                sx={{ 
+                  flex: 1,
+                  display: 'flex',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  backgroundColor: theme.palette.mode === 'dark' 
+                    ? alpha(theme.palette.background.paper, 0.5) 
+                    : alpha(theme.palette.grey[50], 0.8)
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files.length > 0 && currentConversation) {
+                    handleDocumentUpload(e.dataTransfer.files[0]);
+                  }
+                }}
+              >
+                {/* Lista de mensagens */}
+                <Box 
+                  sx={{ 
+                    flex: 1,
+                    overflow: 'auto',
+                    height: '100%',
+                    pr: isDocumentPanelOpen && !isSmall ? 2 : 0,
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                >
+                  {/* Mostrar feedback de processamento se houver upload ativo */}
+                  {uploadStatus.active && (
+                    <Box sx={{ px: 2, pt: 2 }}>
+                      <ProcessingFeedback 
+                        status={uploadStatus.status}
+                        progress={uploadStatus.progress}
+                        filename={uploadStatus.filename}
+                        error={uploadStatus.error}
+                      />
+                    </Box>
+                  )}
+                  
+                  {/* Lista de mensagens */}
+                  <MessageList 
+                    messages={messages}
+                    isTyping={isTyping}
+                    documentReferences={documentReferences}
+                    onViewDocument={handleViewDocument}
+                    messagesEndRef={messagesEndRef}
+                  />
+                </Box>
+                
+                {/* Painel de documentos */}
+                {(!isSmall || isDocumentPanelOpen) && (
+                  <Box
+                    sx={{
+                      display: isDocumentPanelOpen ? 'block' : 'none',
+                      width: isSmall ? '100%' : 350,
+                      height: '100%',
+                      position: isSmall ? 'absolute' : 'relative',
+                      right: 0,
+                      top: 0,
+                      zIndex: 10,
+                      bgcolor: 'background.paper',
+                      borderLeft: !isSmall ? '1px solid' : 'none',
+                      borderColor: 'divider',
+                      boxShadow: isSmall ? 24 : 'none'
+                    }}
+                  >
+                    <DocumentPanel 
+                      ref={documentPanelRef}
+                      conversationId={currentConversation?.conversation_id}
+                      onClose={() => setIsDocumentPanelOpen(false)}
+                      fullScreen={isSmall}
+                      onUploadComplete={handleUploadComplete}
+                    />
+                  </Box>
+                )}
+              </Box>
+              
+              {/* Input de mensagem */}
+              <Box 
+                sx={{ 
+                  p: 2, 
+                  borderTop: '1px solid',
+                  borderColor: 'divider',
+                  bgcolor: theme.palette.background.paper,
+                }}
+              >
+                <MessageInput 
+                  onSendMessage={handleSendMessage} 
+                  onAttachFile={handleFileSelect}
+                  disabled={isTyping || isLoading}
+                  isTyping={isTyping}
+                  processorAvailable={processorStatus.available}
+                  conversationId={currentConversation?.conversation_id}
+                  onViewDocument={handleViewDocument}
+                  onOpenDocumentUploader={handleToggleDocumentPanel}
+                />
+              </Box>
+            </Box>
+          )}
         </Box>
         
         {/* Notificações */}
@@ -805,6 +966,9 @@ const ChatContainer = () => {
           open={isLoading}
         >
           <CircularProgress color="inherit" />
+          <Typography sx={{ ml: 2, color: 'white' }}>
+            Carregando...
+          </Typography>
         </Backdrop>
 
         {/* Drawer de visualização */}
