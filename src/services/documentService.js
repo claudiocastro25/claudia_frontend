@@ -435,7 +435,7 @@ export const deleteDocument = async (documentId) => {
       throw new Error('ID do documento não fornecido');
     }
     
-    const response = await api.delete(API_ENDPOINTS.DOCUMENTS.BASE + `/${documentId}`);
+    const response = await api.delete(API_ENDPOINTS.DOCUMENTS.DOCUMENT(documentId));
     return adaptApiResponse(response);
   } catch (error) {
     console.error('Erro ao excluir documento:', error);
@@ -510,7 +510,7 @@ export const getUserDocuments = async (conversationId = null) => {
       params.conversationId = conversationId;
     }
     
-    const response = await api.get(API_ENDPOINTS.DOCUMENTS.BASE, { params });
+    const response = await api.get(API_ENDPOINTS.DOCUMENTS.LIST, { params });
     const adaptedResponse = adaptApiResponse(response);
     
     let documents = [];
